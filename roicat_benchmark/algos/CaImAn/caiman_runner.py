@@ -1,0 +1,144 @@
+import numpy as np
+import scipy.io
+import natsort
+import pickle
+import logging
+from roicat_benchmark.algos.CaImAn.caiman_tracking import register_ROIs
+
+
+def benchmark_caiman(params):
+    with open(
+        "/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/datasets/CaImAn_default/alignment.pickle",
+        "rb",
+    ) as handle:
+        data = pickle.load(handle)
+
+    spatial_footprints = data[0]
+    template_images = data[1]
+    dims = template_images[0].shape
+
+    # ## Later, make this to load from intended source files. Leave as TBD.
+    # ## TODO: fit to roicat_benchmark format
+    # spatial_footprints, dims, template_images = [], [], []
+    # for session in natsort.natsorted(os.listdir(params["data_path"])):
+    #     session_path = os.path.join(params["data_path"], session)
+    #     ## This can be CSC matrices
+    #     loaded_data = np.load(session_path)
+    #     spatial_footprints.append(loaded_data["spatial_footprints"])
+    #     dims.append(loaded_data["FOV_hw"])
+    #     template_images.append(loaded_data["FOV_images"])
+
+    spatial_union, assignments, matchings = register_multisession(
+        spatial_footprints,
+        dims,
+        template_images,
+        max_thr=params["max_thr"],
+        thresh_cost=params["thresh_cost"],
+        max_dist=params["max_dist"],
+    )
+
+    ## TODO: save the results. Do whatever you want.
+    return spatial_union, assignments, matchings
+
+
+def register_multisession(A,
+                          dims,
+                          templates=[None],
+                          align_flag=True,
+                          max_thr=0,
+                          use_opt_flow=True,
+                          thresh_cost=.7,
+                          max_dist=10,
+                          enclosed_thr=None):
+    """
+    Register ROIs across multiple sessions using an intersection over union metric
+    and the Hungarian algorithm for optimal matching. Registration occurs by 
+    aligning session 1 to session 2, keeping the union of the matched and 
+    non-matched components to register with session 3 and so on.
+
+    Args:
+        A: list of ndarray or csc_matrix matrices # pixels x # of components
+           ROIs from each session
+
+        dims: list or tuple
+            dimensionality of the FOV
+
+        template: list of ndarray matrices of size dims
+            templates from each session
+
+        align_flag: bool
+            align the templates before matching
+
+        max_thr: scalar
+            max threshold parameter before binarization    
+
+        use_opt_flow: bool
+            use dense optical flow to align templates
+
+        thresh_cost: scalar
+            maximum distance considered
+
+        max_dist: scalar
+            max distance between centroids
+
+        enclosed_thr: float
+            if not None set distance to at most the specified value when ground 
+            truth is a subset of inferred
+
+    Returns:
+        A_union: csc_matrix # pixels x # of total distinct components
+            union of all kept ROIs 
+
+        assignments: ndarray int of size # of total distinct components x # sessions
+            element [i,j] = k if component k from session j is mapped to component
+            i in the A_union matrix. If there is no much the value is NaN
+
+        matchings: list of lists
+            matchings[i][j] = k means that component j from session i is represented
+            by component k in A_union
+
+    """
+    logger = logging.getLogger("caiman")
+
+    n_sessions = len(A)
+    templates = list(templates)
+    if len(templates) == 1:
+        templates = n_sessions * templates
+
+    if n_sessions <= 1:
+        raise Exception('number of sessions must be greater than 1')
+
+    A = [a.toarray() if 'ndarray' not in str(type(a)) else a for a in A]
+
+    A_union = A[0].copy()
+    matchings = []
+    matchings.append(list(range(A_union.shape[-1])))
+
+    for sess in range(1, n_sessions):
+        reg_results = register_ROIs(A[sess],
+                                    A_union,
+                                    dims,
+                                    template1=templates[sess],
+                                    template2=templates[sess - 1],
+                                    align_flag=align_flag,
+                                    max_thr=max_thr,
+                                    use_opt_flow=use_opt_flow,
+                                    thresh_cost=thresh_cost,
+                                    max_dist=max_dist,
+                                    enclosed_thr=enclosed_thr)
+
+        mat_sess, mat_un, nm_sess, nm_un, _, A2 = reg_results
+        logger.info(len(mat_sess))
+        A_union = A2.copy()
+        A_union[:, mat_un] = A[sess][:, mat_sess]
+        A_union = np.concatenate((A_union.toarray(), A[sess][:, nm_sess]), axis=1)
+        new_match = np.zeros(A[sess].shape[-1], dtype=int)
+        new_match[mat_sess] = mat_un
+        new_match[nm_sess] = range(A2.shape[-1], A_union.shape[-1])
+        matchings.append(new_match.tolist())
+
+    assignments = np.empty((A_union.shape[-1], n_sessions)) * np.nan
+    for sess in range(n_sessions):
+        assignments[matchings[sess], sess] = range(len(matchings[sess]))
+
+    return A_union, assignments, matchings

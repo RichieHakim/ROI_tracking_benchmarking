@@ -1,0 +1,37 @@
+Sessions list:
+-----------------
+Session 1 - /n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/ROI_tracking_benchmarking/datasets/CellReg_default/spatial_footprints_01.mat
+Session 2 - /n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/ROI_tracking_benchmarking/datasets/CellReg_default/spatial_footprints_02.mat
+
+
+General data parameters:
+------------------------
+Number of sessions - 2
+FOV size - 388.8X306 [microns] ; (x,y)
+Image size - 324X255 [pixels] ; (x,y)
+
+
+Session alignment parameters:
+----------------------------------
+Reference session - 1
+Alignment Type - Non-rigid
+
+
+Cell registration parameters:
+-----------------------------
+Model maximal distance - 12 [microns]
+Initial registration type - Spatial correlation
+Initial threshold - 0.76
+Registration approach - Simple threshold
+Final threshold - 0.76 
+
+
+General results:
+----------------
+Final number of cells - 674
+Average fraction of active cells - 0.85
+
+
+
+Comments:
+---------
