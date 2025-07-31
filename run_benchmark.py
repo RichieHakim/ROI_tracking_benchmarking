@@ -1,7 +1,6 @@
-import os
-import sys
 import subprocess
 import argparse
+from pathlib import Path
 
 from roicat_benchmark.algos.CaImAn.caiman_runner import benchmark_caiman
 
@@ -14,11 +13,19 @@ def main():
     parser.add_argument("--algo", type=str, required=True, choices=["CellReg", "CaImAn"])
     args = parser.parse_args()
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
+    current_dir = Path(__file__).parent
 
     params = {}
-    params["data_path"] = args.data_path
-    params["output_dir"] = args.output_dir
+    if args.algo == "CellReg":
+        params["data_path"] = Path(args.data_path).parent
+        params["output_dir"] = Path(args.output_dir) / "CellReg_output"
+        params["output_dir"].mkdir(parents=True, exist_ok=True)
+    elif args.algo == "CaImAn":
+        params["data_path"] = Path(args.data_path)
+        params["output_dir"] = Path(args.output_dir) / "CaImAn_output"
+        params["output_dir"].mkdir(parents=True, exist_ok=True)
+    else:
+        raise ValueError(f"Algorithm {args.algo} not supported")
     
     if args.algo == "CellReg":
         params["microns_per_pixel"] = 1.2
@@ -50,8 +57,6 @@ def main():
         params["thresh_cost"] = 0.7
         params["max_dist"] = 10
         benchmark_caiman(params)
-    else:
-        raise ValueError(f"Algorithm {args.algo} not supported")
 
 if __name__ == "__main__":
     main()

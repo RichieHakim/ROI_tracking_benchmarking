@@ -1,20 +1,20 @@
 import numpy as np
+import scipy.sparse
 import scipy.io
 import natsort
 import pickle
 import logging
+import richfile as rf
+from pathlib import Path
 from roicat_benchmark.algos.CaImAn.caiman_tracking import register_ROIs
 
 
 def benchmark_caiman(params):
-    with open(
-        "/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/datasets/CaImAn_default/alignment.pickle",
-        "rb",
-    ) as handle:
-        data = pickle.load(handle)
+    data = rf.demo.RichFile_data(check=False,path=params["data_path"]).load()
 
-    spatial_footprints = data[0]
-    template_images = data[1]
+    ## CaImAn asks csc matrices of (pixels, # of components)
+    spatial_footprints = [reshaped_data.T for reshaped_data in data['dataset']['spatial_footprints']]
+    template_images = data['dataset']['FOV_images']
     dims = template_images[0].shape
 
     # ## Later, make this to load from intended source files. Leave as TBD.
@@ -37,8 +37,14 @@ def benchmark_caiman(params):
         max_dist=params["max_dist"],
     )
 
-    ## TODO: save the results. Do whatever you want.
-    return spatial_union, assignments, matchings
+    caiman_results = {
+        "spatial_union": spatial_union,
+        "assignments": assignments,
+        "matchings": matchings,
+    }
+
+    rf.demo.RichFile_data(Path(params["output_dir"]) / "caiman_results.richfile").save(obj=caiman_results, overwrite=True)
+    return caiman_results
 
 
 def register_multisession(A,

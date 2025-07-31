@@ -7,5 +7,6 @@ setup(
     description='Run CaImAn and CellReg on the RoiCat benchmark',
     install_requires=[
         'natsort',
+        'richfile==0.5.3',
     ],
 )
