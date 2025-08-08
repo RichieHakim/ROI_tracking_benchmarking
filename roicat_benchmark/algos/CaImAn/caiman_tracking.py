@@ -9,6 +9,7 @@ import scipy
 from scipy.optimize import linear_sum_assignment
 import time
 from typing import Optional
+import matplotlib.pyplot as plt
 
 from caiman.base.rois import com
 from caiman.motion_correction import tile_and_correct, get_patch_centers, interpolate_shifts
@@ -119,6 +120,8 @@ def register_ROIs(A1,
 
     x_grid, y_grid = np.meshgrid(np.arange(0., dims[1]).astype(np.float32), np.arange(0., dims[0]).astype(np.float32))
 
+    warp_map = None
+
     if align_flag:     # first align ROIs from session 2 to the template from session 1
         template1 -= template1.min()
         template1 /= template1.max()
@@ -132,6 +135,7 @@ def register_ROIs(A1,
                                                 0.5, 3, 128, 3, 7, 1.5, 0)
             x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
             y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
+            warp_map = flow
 
         else:
             align_defaults = {
@@ -226,7 +230,36 @@ def register_ROIs(A1,
     performance['f1_score'] = 2 * TP / (2 * TP + FP + FN)
     logger.info(performance)
 
-    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2
+    if plot_results:
+        if Cn is None:
+            if template1 is not None:
+                Cn = template1
+            elif template2 is not None:
+                Cn = template2
+            else:
+                Cn = np.reshape(A1.sum(1) + A2.sum(1), dims, order='F')
+
+        masks_1 = np.reshape(A1.toarray(), dims + (-1,), order='F').transpose(2, 0, 1)
+        masks_2 = np.reshape(A2.toarray(), dims + (-1,), order='F').transpose(2, 0, 1)
+        #        try : #Plotting function
+        level = 0.98
+        lp, hp = np.nanpercentile(Cn, [5, 95])
+        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
+        ax[0].imshow(Cn, vmin=lp, vmax=hp, cmap=cmap)
+        ax[1].imshow(Cn, vmin=lp, vmax=hp, cmap=cmap)
+        [ax[0].contour(norm_nrg(mm), levels=[level], colors='w', linewidths=1) for mm in masks_1[matched_ROIs1]]
+        [ax[0].contour(norm_nrg(mm), levels=[level], colors='r', linewidths=1) for mm in masks_2[matched_ROIs2]]
+        ax[0].set_title('Matches')
+        ax[0].axis('off')
+        ax[1].imshow(Cn, vmin=lp, vmax=hp, cmap=cmap)
+        [ax[1].contour(norm_nrg(mm), levels=[level], colors='w', linewidths=1) for mm in masks_1[non_matched1]]
+        [ax[1].contour(norm_nrg(mm), levels=[level], colors='r', linewidths=1) for mm in masks_2[non_matched2]]
+        ax[1].set_title('Mismatches')
+        ax[1].axis('off')
+    else:
+        fig = None
+
+    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2, warp_map, fig
 
 def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
     # todo todocument
@@ -342,3 +375,15 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
 
         D_s.append(D)
     return D_s
+
+def norm_nrg(a_):
+
+    a = a_.copy()
+    dims = a.shape
+    a = a.reshape(-1, order='F')
+    indx = np.argsort(a, axis=None)[::-1]
+    cumEn = np.cumsum(a.flatten()[indx]**2)
+    cumEn /= cumEn[-1]
+    a = np.zeros(np.prod(dims))
+    a[indx] = cumEn
+    return a.reshape(dims, order='F')

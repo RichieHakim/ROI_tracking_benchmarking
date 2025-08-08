@@ -1,22 +1,14 @@
-function cellreg_cmd(data_path, results_directory, microns_per_pixel,...
-transformation_smoothness, p_same_certainty_threshold, p_same_threshold,...
-sufficient_correlation_centroids, sufficient_correlation_footprints, registration_approach)
+function cellreg_cmd(param_path)
 %% Method overview:
-
 % Adapted from original CellReg code
 memory_efficient_run = 1;
+params = load(fullfile(param_path));
 
-% Load params
-params = struct();
-params.data_path = data_path;
-params.results_directory = results_directory;
-params.microns_per_pixel = microns_per_pixel;
-params.transformation_smoothness = transformation_smoothness;
-params.p_same_certainty_threshold = p_same_certainty_threshold;
-params.p_same_threshold = p_same_threshold;
-params.sufficient_correlation_centroids = sufficient_correlation_centroids;
-params.sufficient_correlation_footprints = sufficient_correlation_footprints;
-params.registration_approach = registration_approach;
+%%
+results_directory = params.output_dir;
+data_path = params.data_path;
+figures_directory = fullfile(results_directory);
+figures_visibility='off';
 
 % Sanity check:
 disp(params)
@@ -29,14 +21,20 @@ params.p_same_threshold = double(params.p_same_threshold);
 params.sufficient_correlation_centroids = double(params.sufficient_correlation_centroids);
 params.sufficient_correlation_footprints = double(params.sufficient_correlation_footprints);
 
-% define data path
-list_of_files = dir(fullfile(data_path, '*.mat'));
-temp_names = string({list_of_files.name});
-sorted_temp_names = natsort(temp_names); 
-file_names = cellstr(fullfile(data_path, sorted_temp_names));
-disp(sorted_temp_names)
+% % define data path
+% list_of_files = dir(fullfile(data_path, '*.mat'));
+% temp_names = string({list_of_files.name});
+% sorted_temp_names = natsort(temp_names); 
+% file_names = cellstr(fullfile(data_path, sorted_temp_names));
+% disp(sorted_temp_names)
+% disp(file_names)
+% clear list_of_files temp_names sorted_temp_names
+
+file_names = {};
+for ii=1:size(params.data_path,1)
+    file_names{ii} = fullfile(params.data_path(ii,:));
+end
 disp(file_names)
-clear list_of_files temp_names sorted_temp_names
 
 if memory_efficient_run
     temp_dir = [results_directory, filesep, 'temp']; 
@@ -62,6 +60,7 @@ else
 end
 
 [footprints_projections]=compute_footprints_projections(spatial_footprints);
+plot_all_sessions_projections(footprints_projections,figures_directory,figures_visibility)
 disp('Done')
 clear footprints_projections
 
@@ -134,6 +133,13 @@ end
     footprints_projections_corrected,maximal_cross_correlation,alignment_translations,...
     reference_session_index,sufficient_correlation_footprints,alignment_type);
 
+% plotting alignment results:
+if strcmp(alignment_type,'Non-rigid')
+    plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility,displacement_fields)
+else
+    plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility)
+end
+
 if use_parallel_processing
     delete(gcp);
 end
@@ -165,6 +171,10 @@ disp('Stage 3 - Calculating a probabilistic model of the data')
     compute_data_distribution(spatial_footprints_corrected,centroid_locations_corrected,...
     normalized_maximal_distance);
 
+% Plotting the (x,y) displacements:
+plot_x_y_displacements(neighbors_x_displacements,neighbors_y_displacements,...
+    microns_per_pixel,normalized_maximal_distance,number_of_bins,centers_of_bins,...
+    figures_directory,figures_visibility);
 disp('Part a done')
 
 %% Stage 3 (part b) - Compute a probabilistic model:
@@ -205,6 +215,26 @@ disp('Calculating a probabilistic model of the data')
     spatial_correlations_model_same_cells,spatial_correlations_model_different_cells,...
     p_same_given_spatial_correlation);
 
+% Plotting the probabilistic models and estimated registration accuracy:
+plot_models(centroid_distances_model_parameters,NN_centroid_distances,...
+    NNN_centroid_distances,centroid_distances_distribution,...
+    centroid_distances_model_same_cells,centroid_distances_model_different_cells,...
+    centroid_distances_model_weighted_sum,centroid_distance_intersection,...
+    centers_of_bins,microns_per_pixel,normalized_maximal_distance,figures_directory,...
+    figures_visibility,spatial_correlations_model_parameters,NN_spatial_correlations,...
+    NNN_spatial_correlations,spatial_correlations_distribution,...
+    spatial_correlations_model_same_cells,spatial_correlations_model_different_cells,...
+    spatial_correlations_model_weighted_sum,spatial_correlation_intersection)
+
+plot_estimated_registration_accuracy(p_same_centers_of_bins,p_same_certainty_threshold,...
+    p_same_given_centroid_distance,centroid_distances_distribution,...
+    cdf_p_same_centroid_distances,uncertain_fraction_centroid_distances,...
+true_positive_per_distance_threshold,false_positive_per_distance_threshold,...
+centers_of_bins,normalized_maximal_distance,microns_per_pixel,figures_directory,...
+figures_visibility,p_same_given_spatial_correlation,spatial_correlations_distribution,...
+cdf_p_same_spatial_correlations,uncertain_fraction_spatial_correlations,...
+true_positive_per_correlation_threshold,false_positive_per_correlation_threshold)
+
 % Computing the P_same for each neighboring cell-pair according to the different models:
 [all_to_all_p_same_centroid_distance_model,all_to_all_p_same_spatial_correlation_model]=...
     compute_p_same(all_to_all_centroid_distances,p_same_given_centroid_distance,...
@@ -233,6 +263,7 @@ if strcmp(initial_registration_type,'Spatial correlation') % if spatial correlat
         [cell_to_index_map,registered_cells_spatial_correlations,non_registered_cells_spatial_correlations]=...
             initial_registration_spatial_correlations(normalized_maximal_distance,...
             initial_threshold,spatial_footprints_corrected,centroid_locations_corrected);
+        plot_initial_registration(cell_to_index_map,number_of_bins,spatial_footprints_corrected,initial_registration_type,figures_directory,figures_visibility,registered_cells_spatial_correlations,non_registered_cells_spatial_correlations)
 else % if centroid distances are used
     if exist('centroid_distance_intersection','var')
         initial_threshold=centroid_distance_intersection; % the threshold for p_same=0.5;
@@ -242,6 +273,7 @@ else % if centroid distances are used
     normalized_distance_threshold=initial_threshold/microns_per_pixel;
     [cell_to_index_map,registered_cells_centroid_distances,non_registered_cells_centroid_distances]=...
         initial_registration_centroid_distances(normalized_maximal_distance,normalized_distance_threshold,centroid_locations_corrected);
+    plot_initial_registration(cell_to_index_map,number_of_bins,spatial_footprints_corrected,initial_registration_type,figures_directory,figures_visibility,registered_cells_centroid_distances,non_registered_cells_centroid_distances,microns_per_pixel,normalized_maximal_distance)
 end
 
 disp([num2str(size(cell_to_index_map,1)) ' cells were found'])
@@ -298,6 +330,7 @@ if strcmp(registration_approach,'Probabilistic')
             all_to_all_indexes,normalized_maximal_distance,p_same_threshold,...
             centroid_locations_corrected,registration_approach,transform_data);
     end
+    plot_cell_scores(cell_scores_positive,cell_scores_negative,cell_scores_exclusive,cell_scores,p_same_registered_pairs,figures_directory,figures_visibility)
 elseif strcmp(registration_approach,'Simple threshold')
     if strcmp(model_type,'Spatial correlation')
         [optimal_cell_to_index_map,registered_cells_centroids]=...
@@ -312,6 +345,10 @@ elseif strcmp(registration_approach,'Simple threshold')
     end
 end
 [is_in_overlapping_FOV]=check_if_in_overlapping_FOV(registered_cells_centroids,overlapping_FOV);
+
+% Plotting the registration results with the cell maps from all sessions:
+plot_all_registered_projections(spatial_footprints_corrected,...
+    optimal_cell_to_index_map,figures_directory,figures_visibility)
 
 % move corrected_spatial footprints 
 if memory_efficient_run
@@ -337,6 +374,11 @@ if strcmp(registration_approach,'Probabilistic')
     cell_registered_struct.exclusivity_scores=cell_scores_exclusive';
     cell_registered_struct.p_same_registered_pairs=p_same_registered_pairs';
 end
+%% 20250807 Gyu: Added some variables to the output
+if strcmp(alignment_type,'Non-rigid')
+    cell_registered_struct.displacement_fields=displacement_fields;
+end
+
 cell_registered_struct.is_cell_in_overlapping_FOV=is_in_overlapping_FOV';
 cell_registered_struct.registered_cells_centroids=registered_cells_centroids';
 cell_registered_struct.centroid_locations_corrected=centroid_locations_corrected';

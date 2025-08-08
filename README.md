@@ -25,10 +25,11 @@ cd ROI_tracking_benchmarking
 pip install -e .
 ```
 
-For some reason, the CaImAn environment has version issues. If you run into any tensorflow issues, try downgrading both python and tensorflow:
+Sometimes, the CaImAn environment has version issues. If you run into any tensorflow issues, try downgrading both python and tensorflow:
 ```
 conda install python=3.10
 pip install -U tensorflow==2.14
+pip install -e .
 ```
 
 ## Usage for test data
@@ -37,11 +38,17 @@ First, untar the test data in datasets/test_pass. Then, run the following comman
 CaImAn for running the benchmark.
 ```
 cd ROI_tracking_benchmarking ## Skip if you're already in the directory
-python3 run_benchmark.py --data-path datasets/test_pass/Adesnik_Ian_sigma_translation_0.50_repeat0/Adesnik_Ian_sigma_translation_0.50_repeat0/generated_dataset.richfile --output-dir demo_output --algo CaImAn
+python3 run_benchmark.py --data-dir datasets/test_pass/Adesnik_Ian_sigma_translation_0.50_repeat0/Adesnik_Ian_sigma_translation_0.50_repeat0 --output-dir demo_output --algo CaImAn --pattern-to-search \* --plot-results
 ```
 
 CellReg for running the benchmark.
 ```
 cd ROI_tracking_benchmarking ## Skip if you're already in the directory
-python3 run_benchmark.py --data-path datasets/test_pass/Adesnik_Ian_sigma_translation_0.50_repeat0/Adesnik_Ian_sigma_translation_0.50_repeat0/generated_dataset.richfile --output-dir demo_output --algo CellReg
+python3 run_benchmark.py --data-dir datasets/test_pass/Adesnik_Ian_sigma_translation_0.50_repeat0/Adesnik_Ian_sigma_translation_0.50_repeat0 --output-dir demo_output --algo CellReg --pattern-to-search \* --plot-results
 ```
+
+## From richfile to matfile
+Please check out utils/sample_matfile_maker.py for converting richfile to matfile.
+
+## CellReg parameter architecture
+Please check out utils/sample_param_maker.py for the parameter architecture.

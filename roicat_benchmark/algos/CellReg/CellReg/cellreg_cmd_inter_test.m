@@ -1,65 +1,48 @@
 %% Method overview:
-
-% This is an implementation of a probabilistic approach for the
-% identification of the same neurons (cell registration) across multiple sessions
-% in Ca2+ imaging data, developed by Sheintuch et al., 2017.
-
-% Input: The inputs for the cell registration method are the spatial footprints of
-% cellular activity (weighted ROIs) of the cells that were detected in the different
-% sessions. Each spatial footprint is a matrix the size of the frame and
-% each pixel's value represents its contribution to the
-% cell's fluorescence.
-
-% Output: The main output for the cell registration method is the obtained mapping of
-% cell identity across all registered sessions. It is a matrix the size of
-% the final number of registered cells by the number of registered
-% sessions. Each entry holds the index for the cell in a given session.
-% Other outputs include:
-% 1. register scores - providing with the registration quality of each cell register
-% 2. log file - with all the relevant information regarding the data, registration
-% configurations, and a summary of the registration results and quality.
-% 3. figures - saved automatically in a designated folder.
-
-% The code includes the following stages:
-% 1. Loading the spatial footprints of cellular activity from the different sessions.
-% 2. Aligning all the sessions according to a reference coordinate system
-% 3. Computing a probabilistic model of the spatial footprints similarities
-% 4. Obtaining an initial cell registration according to an optimized registration threshold.
-% 5. Obtaining the final cell registration based on a clustering algorithm.
-
-%modifications for 2P data: adding option to iteratively load and save spatial footprint files and
-% write more to file during processing so don't run into out-of-memory errors. Is
-% much slower for smaller (1P) datasets but allows you to run many 2P
-% datasets through pipeline without running out of memory
-
 clear all
+% param_path = '/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/dumb_test/cellreg_params.mat'
+param_path = '/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/dumb_test_2/cellreg_params.mat'
+%%
+
+% Adapted from original CellReg code
 memory_efficient_run = 1;
+% memory_efficient_run = 0;
+params = load(fullfile(param_path));
 
-%% Setting paths for the cell registration procedure:
-
-% we need to find the path up-two levels
-[fileroot,~,~] = fileparts(mfilename('fullpath'));
-[fileroot,~,~] = fileparts(fileroot);
 %%
-% Defining the results_directory and creating the figures_directory:
-results_directory= fullfile(fileroot,'SampleData', 'Results') ;
+results_directory = params.output_dir;
+data_path = params.data_path;
+figures_directory = fullfile(results_directory);
+figures_visibility='on';
 
-figures_directory=fullfile(results_directory,'Figures');
-if exist(figures_directory,'dir')~=7
-    mkdir(figures_directory);
-end
+% Sanity check:
+disp(params)
 
-figures_visibility='on'; % either 'on' or 'off' (in any case figures are saved)
+% Type casting
+params.microns_per_pixel = double(params.microns_per_pixel);
+params.transformation_smoothness = double(params.transformation_smoothness);
+params.p_same_certainty_threshold = double(params.p_same_certainty_threshold);
+params.p_same_threshold = double(params.p_same_threshold);
+params.sufficient_correlation_centroids = double(params.sufficient_correlation_centroids);
+params.sufficient_correlation_footprints = double(params.sufficient_correlation_footprints);
 %%
-% define path of sample data
-number_of_sessions=5;
-file_names=cell(1,number_of_sessions);
-for it = 1:number_of_sessions
-    file_names{it} = fullfile(fileroot, 'SampleData',sprintf('spatial_footprints_0%1i.mat',it));
+% % define data path
+% list_of_files = dir(fullfile(data_path, '*.mat'));
+% temp_names = string({list_of_files.name});
+% sorted_temp_names = natsort(temp_names); 
+% file_names = cellstr(fullfile(data_path, sorted_temp_names));
+% disp(sorted_temp_names)
+% disp(file_names)
+% clear list_of_files temp_names sorted_temp_names
+
+file_names = {};
+for ii=1:size(params.data_path,1)
+    file_names{ii} = fullfile(params.data_path(ii,:));
 end
+disp(file_names)
 
 if memory_efficient_run
-    temp_dir = [figures_directory, filesep, 'temp']; 
+    temp_dir = [results_directory, filesep, 'temp']; 
     if ~exist(temp_dir)
         mkdir(temp_dir);
     end
@@ -70,7 +53,7 @@ end
 % identified spatial footprints.
 
 % Defining the parameters:
-microns_per_pixel=1.2;
+microns_per_pixel=params.microns_per_pixel; % default 1.2
 
 % Loading the data:
 disp('Stage 1 - Loading sessions')
@@ -86,6 +69,12 @@ plot_all_sessions_projections(footprints_projections,figures_directory,figures_v
 disp('Done')
 clear footprints_projections
 
+%% Sanity check
+if memory_efficient_run
+    figure;
+    imagesc(squeeze(spatial_footprints{1}(1,:,:)))
+end
+
 %% Stage 2 - Aligning all the sessions to a reference coordinate system:
 % A rigid-body transfomration is applied to all the sessions
 % according to a chosen reference ssseion. The alignment includes:
@@ -94,11 +83,10 @@ clear footprints_projections
 % 3. Evaluating how suitable the data is for longitudinal analysis
 
 % Defining the parameters for image alignment:
-% alignment_type='Translations and Rotations'; % either 'Translations', 'Translations and Rotations' or 'Non-rigid'
-alignment_type='Non-rigid'
+alignment_type='Non-rigid'; % either 'Translations', 'Translations and Rotations' or 'Non-rigid'
 use_parallel_processing=true; % either true or false
 maximal_rotation=30; % in degrees - only relevant if 'Translations and Rotations' is used
-transformation_smoothness=2; % levels of non-rigid FOV transformation smoothness (range 0.5-3)
+transformation_smoothness=params.transformation_smoothness; % levels of non-rigid FOV transformation smoothness (range 0.5-3), default 2
 reference_session_index=1; 
 
 % Preparing the data for alignment:
@@ -119,8 +107,8 @@ clear normalized_spatial_footprints
 [centroid_projections]=compute_centroids_projections(centroid_locations,adjusted_spatial_footprints);
 
 % Aligning the cells according to the tranlations/rotations that maximize their similarity:
-sufficient_correlation_centroids=0.2; % smaller correlation imply no similarity between sessions
-sufficient_correlation_footprints=0.3; % smaller correlation imply no similarity between sessions
+sufficient_correlation_centroids=params.sufficient_correlation_centroids; % smaller correlation imply no similarity between sessions, default 0.2
+sufficient_correlation_footprints=params.sufficient_correlation_footprints; % smaller correlation imply no similarity between sessions, default 0.3
 if strcmp(alignment_type,'Translations and Rotations')
     [spatial_footprints_corrected,centroid_locations_corrected,...
         footprints_projections_corrected,centroid_projections_corrected,...
@@ -135,10 +123,18 @@ elseif strcmp(alignment_type,'Non-rigid')
         footprints_projections_corrected,centroid_projections_corrected,...
         maximal_cross_correlation,alignment_translations,overlapping_FOV,...
         displacement_fields]=...
-        align_images(adjusted_spatial_footprints,centroid_locations,adjusted_footprints_projections,centroid_projections,adjusted_FOV,microns_per_pixel,reference_session_index,alignment_type,sufficient_correlation_centroids,sufficient_correlation_footprints,use_parallel_processing,transformation_smoothness);
+        align_images(adjusted_spatial_footprints,centroid_locations,...
+        adjusted_footprints_projections,centroid_projections,adjusted_FOV,...
+        microns_per_pixel,reference_session_index,alignment_type,...
+        sufficient_correlation_centroids,sufficient_correlation_footprints,...
+        use_parallel_processing,transformation_smoothness);
 else
     [spatial_footprints_corrected,centroid_locations_corrected,footprints_projections_corrected,centroid_projections_corrected,maximal_cross_correlation,alignment_translations,overlapping_FOV]=...
-        align_images(adjusted_spatial_footprints,centroid_locations,adjusted_footprints_projections,centroid_projections,adjusted_FOV,microns_per_pixel,reference_session_index,alignment_type,sufficient_correlation_centroids,sufficient_correlation_footprints,use_parallel_processing);
+        align_images(adjusted_spatial_footprints,centroid_locations,...
+        adjusted_footprints_projections,centroid_projections,adjusted_FOV,...
+        microns_per_pixel,reference_session_index,alignment_type,...
+        sufficient_correlation_centroids,sufficient_correlation_footprints,...
+        use_parallel_processing);
 end
 
 
@@ -147,7 +143,7 @@ end
     evaluate_data_quality(spatial_footprints_corrected,centroid_projections_corrected,...
     footprints_projections_corrected,maximal_cross_correlation,alignment_translations,...
     reference_session_index,sufficient_correlation_footprints,alignment_type);
-%%
+
 % plotting alignment results:
 if strcmp(alignment_type,'Non-rigid')
     plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility,displacement_fields)
@@ -155,7 +151,6 @@ else
     plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility)
 end
 
-%%
 if use_parallel_processing
     delete(gcp);
 end
@@ -169,9 +164,12 @@ disp('Done')
 % correlations from the data.
 
 % Defining the parameters for the probabilstic modeling:
-maximal_distance=12; % cell-pairs that are more than 12 micrometers apart are assumed to be different cells
+% Maximal distance here is chosen to be the assumed typical cell size.
+% 20250728 Gyu: We don't touch maximal_distance. We only modify microns_per_pixel.
+% There are many hard-coded values varied inside the original code. We will not touch them.
+maximal_distance=12; % cell-pairs that are more than 12 micrometers apart are assumed to be different cells.
 normalized_maximal_distance=maximal_distance/microns_per_pixel;
-p_same_certainty_threshold=0.95; % certain cells are those with p_same>threshld or <1-threshold
+p_same_certainty_threshold=params.p_same_certainty_threshold; % certain cells are those with p_same>threshld or <1-threshold, default 0.95
 
 % Computing correlations and distances across days:
 disp('Stage 3 - Calculating a probabilistic model of the data')
@@ -299,9 +297,9 @@ disp('Done')
 % correlations.
 
 % Defining the parameters for final registration:
-registration_approach='Probabilistic'; % either 'Probabilistic' or 'Simple threshold'
+registration_approach=params.registration_approach; % either 'Probabilistic' or 'Simple threshold'
 model_type=best_model_string; % either 'Spatial correlation' or 'Centroid distance'
-p_same_threshold=0.5; % only relevant if probabilistic approach is used
+p_same_threshold=params.p_same_threshold; % only relevant if probabilistic approach is used; default 0.5
 
 % Deciding on the registration threshold:
 transform_data=false;
@@ -387,6 +385,11 @@ if strcmp(registration_approach,'Probabilistic')
     cell_registered_struct.exclusivity_scores=cell_scores_exclusive';
     cell_registered_struct.p_same_registered_pairs=p_same_registered_pairs';
 end
+%% 20250807 Gyu: Added some variables to the output
+if strcmp(alignment_type,'Non-rigid')
+    cell_registered_struct.displacement_fields=displacement_fields;
+end
+
 cell_registered_struct.is_cell_in_overlapping_FOV=is_in_overlapping_FOV';
 cell_registered_struct.registered_cells_centroids=registered_cells_centroids';
 cell_registered_struct.centroid_locations_corrected=centroid_locations_corrected';

@@ -6,7 +6,9 @@ setup(
     packages=find_packages(),
     description='Run CaImAn and CellReg on the RoiCat benchmark',
     install_requires=[
-        'natsort',
+        'numpy==1.26.4',
+        'natsort==8.4.0',
         'richfile==0.5.3',
+        'hdf5storage==0.2.0',
     ],
 )
