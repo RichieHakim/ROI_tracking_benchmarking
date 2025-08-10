@@ -18,6 +18,7 @@ def benchmark_caiman(params):
     # dims = template_images[0].shape
 
     ## RealData richfile format
+    ## CaImAn asks csc matrices of (pixels, # of components)
     spatial_footprints = [
         reshaped_data.T for reshaped_data in data['spatialFootprints']
     ]
