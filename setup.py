@@ -10,5 +10,6 @@ setup(
         'natsort==8.4.0',
         'richfile==0.5.3',
         'hdf5storage==0.2.0',
+        'psutil==7.0.0'
     ],
 )

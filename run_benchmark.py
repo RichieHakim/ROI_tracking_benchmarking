@@ -1,4 +1,9 @@
 import subprocess
+import threading
+import psutil
+import time
+
+import os
 import argparse
 from pathlib import Path
 from scipy.io import savemat
@@ -66,10 +71,88 @@ def main():
         savemat(param_path, params)
         print(f"Saved {param_path}", flush=True)
 
-        result = subprocess.run(["bash", f"{current_dir}/bin/cellreg_slurm_local.sh", str(param_path)],
-                                capture_output=True, text=True)
-        print(result.stdout)
-        print(result.stderr)
+        # result = subprocess.run(["bash", f"{current_dir}/bin/cellreg_slurm_local.sh", str(param_path)],
+        #                         capture_output=True, text=True)
+        # print(result.stdout)
+        # print(result.stderr)
+
+        ## To check whether the script is alive or not, online.
+        print("Initialize subprocess...", flush=True)
+        script_path = f"{current_dir}/bin/cellreg_slurm_local.sh"
+        alive_process = subprocess.Popen(
+            ["bash", script_path, str(param_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+        def process_readout(pipe, prefix):
+            for line in iter(pipe.readline, ""):
+                print(f"{prefix}: {line.strip()}", flush=True)
+            pipe.close()
+
+        ## Threads for readout
+        stdout_thread = threading.Thread(
+            target=process_readout,
+            args=(alive_process.stdout, "stdout"),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=process_readout,
+            args=(alive_process.stderr, "stderr"),
+            daemon=True,
+        )
+
+        stdout_thread.start()
+        stderr_thread.start()
+
+        ## Wait for process to start
+        time.sleep(10)
+
+        try:
+            bash_alive = psutil.Process(alive_process.pid)
+            process_children = bash_alive.children(recursive=True)
+            matlab_alive = next((child for child in process_children if 'matlab' in child.name().lower()), None)
+
+            if matlab_alive:
+                print(f"Matlab process found with PID {matlab_alive.pid}", flush=True)
+                while alive_process.poll() is None:
+                    try:
+                        mem_usage = matlab_alive.memory_info().rss / 1024 / 1024
+                        cpu_usage = matlab_alive.cpu_percent(interval=1.0)
+                        print(f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                        print(f"Current memory usage: {mem_usage:.2f} MB ({mem_usage/1024:.2f} GB)", flush=True)
+                        print(f"CPU usage: {cpu_usage:.2f}%", flush=True)
+                    except psutil.NoSuchProcess:
+                        print("Matlab process terminated", flush=True)
+                        break
+                    time.sleep(600) ## Check every 10 mins
+            else:
+                print("Matlab process not found. Try shell process...", flush=True)
+                while alive_process.poll() is None:
+                    try:
+                        mem_usage = bash_alive.memory_info().rss / 1024 / 1024
+                        cpu_usage = bash_alive.cpu_percent(interval=1.0)
+                        print(f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                        print(f"Current memory usage: {mem_usage:.2f} MB ({mem_usage/1024:.2f} GB)", flush=True)
+                        print(f"CPU usage: {cpu_usage:.2f}%", flush=True)
+                    except psutil.NoSuchProcess:
+                        print("Shell process terminated", flush=True)
+                        break
+                    time.sleep(600) ## Check every 10 mins
+        except psutil.NoSuchProcess:
+            print("Process terminated", flush=True)
+
+        ## Wait for the process to finish
+        return_code = alive_process.wait()
+        print(f"Process terminated with return code {return_code}", flush=True)
+
+        stdout_thread.join()
+        stderr_thread.join()
+
+        print("Monitoring terminated", flush=True)
         
     elif args.algo == "CaImAn":
         caiman_output_dir = args.output_dir / "CaImAn_output"
@@ -101,7 +184,41 @@ def main():
         params["max_thr"] = 0
         params["thresh_cost"] = 0.7
         params["max_dist"] = 10
-        benchmark_caiman(params)
+
+        def background_monitoring(interval=600, stop_event=None):
+            alive_python = psutil.Process(os.getpid())
+            while not stop_event.is_set():
+                try:
+                    mem_usage = alive_python.memory_info().rss / 1024 / 1024
+                    cpu_usage = alive_python.cpu_percent(interval=1.0)
+                    print(f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+                    print(f"Current memory usage: {mem_usage:.2f} MB ({mem_usage/1024:.2f} GB)", flush=True)
+                    print(f"CPU usage: {cpu_usage:.2f}%", flush=True)
+                except psutil.NoSuchProcess:
+                    print("Python process terminated", flush=True)
+                    break
+                time.sleep(interval)
+
+        print("Start monitoring...", flush=True)
+        stop_event = threading.Event()
+        monitor_thread = threading.Thread(
+            target=background_monitoring,
+            args=(600, stop_event),
+            daemon=True,
+        )
+        monitor_thread.start()
+
+        print(f"CaImAn started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+        try:
+            benchmark_caiman(params)
+        except Exception as e:
+            print(f"CaImAn failed: {e}", flush=True)
+        finally:
+            stop_event.set()
+            monitor_thread.join()
+            print("Monitoring terminated", flush=True)
+
+        print(f"CaImAn done at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
     else:
         raise ValueError(f"Algorithm {args.algo} not supported")
 
