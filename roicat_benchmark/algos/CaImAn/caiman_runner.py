@@ -46,8 +46,6 @@ def benchmark_caiman(params):
     rf.demo.RichFile_data(Path(params["output_dir"]) / "caiman_results.richfile").save(obj=caiman_results, overwrite=True)
     print(f"Saved {Path(params['output_dir']) / 'caiman_results.richfile'}", flush=True)
     print(f"CaImAn run done", flush=True)
-    return caiman_results
-
 
 def register_multisession(A,
                           dims,

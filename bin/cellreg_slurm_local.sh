@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 module load matlab/2023b
 
 if [ -n "$SLURM_JOB_ID" ]; then

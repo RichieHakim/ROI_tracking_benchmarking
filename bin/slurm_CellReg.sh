@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -c 4
-#SBATCH -t 0-10:00
-#SBATCH --mem=240G
-#SBATCH -p short
+#SBATCH -t 1-00:00
+#SBATCH --mem=32G
+#SBATCH -p medium
 #SBATCH --job-name=CellReg
-#SBATCH --output=/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/ROI_tracking_benchmarking/bin/slurm_output/CellReg_%j.out
-#SBATCH --error=/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/ROI_tracking_benchmarking/bin/slurm_output/CellReg_%j.err
+
+set -e
 
 # Load modules
 module load gcc/14.2.0
@@ -56,5 +56,10 @@ echo "Running: ${args[@]}"
 "${args[@]}"
 
 echo "Job done at $(date '+%Y-%m-%d %H:%M:%S')"
+
+echo "Check for MaxRSS"
+
+## Array job add
+sstat -j $SLURM_JOB_ID --format=MaxRSS%30 -n --noconvert
 
 ## Maybe check memory usage for every 10 mins

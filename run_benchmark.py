@@ -1,19 +1,16 @@
 import subprocess
 import threading
-import psutil
 import time
 
 import os
 import argparse
 from pathlib import Path
 from scipy.io import savemat
-import natsort
 
 from roicat_benchmark.algos.CaImAn.caiman_runner import benchmark_caiman
 from roicat_benchmark.utils.sample_param_maker import cellreg_param_maker
+from roicat_benchmark.utils.utils import process_monitor, popen_reader
 
-## TODO: Better IO path handling
-## TODO: Especially for CellReg, think about how to pass pattern_to_search
 def main():
     ## TODO: This would be where we let hyperparameter optimizers to choose the best parameters
     ## For now, we just load the default parameters
@@ -37,16 +34,28 @@ def main():
 
     print(f"Running {args.algo}", flush=True)
     print(f"Data directory: {args.data_dir}", flush=True)
-    print(f"Output directory: {args.output_dir}", flush=True)
     print(f"Plot results: {args.plot_results}", flush=True)
 
     if args.pattern_to_search is None:
         args.pattern_to_search = ["*"]
     
     if args.algo == "CellReg":
+        ## Default output directory
         cellreg_output_dir = args.output_dir / "CellReg_output"
+
+        ## Check for array job
+        if "SLURM_JOB_ID" in os.environ:
+            job_id = os.environ["SLURM_JOB_ID"]
+            if "SLURM_ARRAY_TASK_ID" in os.environ:
+                array_id = os.environ["SLURM_ARRAY_TASK_ID"]
+            else:
+                array_id = "0"
+            cellreg_output_dir = cellreg_output_dir / f"JobId_{job_id}_{array_id}"
         cellreg_output_dir.mkdir(parents=True, exist_ok=True)
-        cellreg_patterns = list(map(lambda x: x + ".mat", args.pattern_to_search))
+        print(f"Output directory: {cellreg_output_dir}", flush=True)
+
+        ## Search for spatial footprints
+        cellreg_patterns = list(map(lambda x: x.split(".")[0] + ".mat", args.pattern_to_search))
         print(f"For CellReg, searching for {cellreg_patterns}", flush=True)
 
         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -71,12 +80,7 @@ def main():
         savemat(param_path, params)
         print(f"Saved {param_path}", flush=True)
 
-        # result = subprocess.run(["bash", f"{current_dir}/bin/cellreg_slurm_local.sh", str(param_path)],
-        #                         capture_output=True, text=True)
-        # print(result.stdout)
-        # print(result.stderr)
-
-        ## To check whether the script is alive or not, online.
+        ## Initialize the subprocess for CellReg
         print("Initialize subprocess...", flush=True)
         script_path = f"{current_dir}/bin/cellreg_slurm_local.sh"
         alive_process = subprocess.Popen(
@@ -88,22 +92,8 @@ def main():
             universal_newlines=True,
         )
 
-        def process_readout(pipe, prefix):
-            for line in iter(pipe.readline, ""):
-                print(f"{prefix}: {line.strip()}", flush=True)
-            pipe.close()
-
         ## Threads for readout
-        stdout_thread = threading.Thread(
-            target=process_readout,
-            args=(alive_process.stdout, "stdout"),
-            daemon=True,
-        )
-        stderr_thread = threading.Thread(
-            target=process_readout,
-            args=(alive_process.stderr, "stderr"),
-            daemon=True,
-        )
+        stdout_thread, stderr_thread = popen_reader(alive_process)
 
         stdout_thread.start()
         stderr_thread.start()
@@ -111,39 +101,13 @@ def main():
         ## Wait for process to start
         time.sleep(10)
 
-        try:
-            bash_alive = psutil.Process(alive_process.pid)
-            process_children = bash_alive.children(recursive=True)
-            matlab_alive = next((child for child in process_children if 'matlab' in child.name().lower()), None)
-
-            if matlab_alive:
-                print(f"Matlab process found with PID {matlab_alive.pid}", flush=True)
-                while alive_process.poll() is None:
-                    try:
-                        mem_usage = matlab_alive.memory_info().rss / 1024 / 1024
-                        cpu_usage = matlab_alive.cpu_percent(interval=1.0)
-                        print(f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                        print(f"Current memory usage: {mem_usage:.2f} MB ({mem_usage/1024:.2f} GB)", flush=True)
-                        print(f"CPU usage: {cpu_usage:.2f}%", flush=True)
-                    except psutil.NoSuchProcess:
-                        print("Matlab process terminated", flush=True)
-                        break
-                    time.sleep(600) ## Check every 10 mins
-            else:
-                print("Matlab process not found. Try shell process...", flush=True)
-                while alive_process.poll() is None:
-                    try:
-                        mem_usage = bash_alive.memory_info().rss / 1024 / 1024
-                        cpu_usage = bash_alive.cpu_percent(interval=1.0)
-                        print(f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                        print(f"Current memory usage: {mem_usage:.2f} MB ({mem_usage/1024:.2f} GB)", flush=True)
-                        print(f"CPU usage: {cpu_usage:.2f}%", flush=True)
-                    except psutil.NoSuchProcess:
-                        print("Shell process terminated", flush=True)
-                        break
-                    time.sleep(600) ## Check every 10 mins
-        except psutil.NoSuchProcess:
-            print("Process terminated", flush=True)
+        ## Start monitoring the process
+        process_monitor(
+            process_to_monitor=alive_process,
+            interval=600,
+            child_name="matlab",
+            stop_event=None,
+        )
 
         ## Wait for the process to finish
         return_code = alive_process.wait()
@@ -152,13 +116,22 @@ def main():
         stdout_thread.join()
         stderr_thread.join()
 
+        ## MaxRSS check will be done in the shell script
         print("Monitoring terminated", flush=True)
         
     elif args.algo == "CaImAn":
         caiman_output_dir = args.output_dir / "CaImAn_output"
+        if "SLURM_JOB_ID" in os.environ:
+            job_id = os.environ["SLURM_JOB_ID"]
+            if "SLURM_ARRAY_TASK_ID" in os.environ:
+                array_id = os.environ["SLURM_ARRAY_TASK_ID"]
+            else:
+                array_id = "0"
+            caiman_output_dir = caiman_output_dir / f"JobId_{job_id}_{array_id}"
+        print(f"Output directory: {caiman_output_dir}", flush=True)
         caiman_output_dir.mkdir(parents=True, exist_ok=True)
 
-        caiman_patterns = list(map(lambda x: x + ".richfile", args.pattern_to_search))
+        caiman_patterns = list(map(lambda x: x.split(".")[0] + ".richfile", args.pattern_to_search))
         print(f"For CaImAn, searching for {caiman_patterns}", flush=True)
         params = {}
         params["data_dir"] = str(args.data_dir)
@@ -185,25 +158,11 @@ def main():
         params["thresh_cost"] = 0.7
         params["max_dist"] = 10
 
-        def background_monitoring(interval=600, stop_event=None):
-            alive_python = psutil.Process(os.getpid())
-            while not stop_event.is_set():
-                try:
-                    mem_usage = alive_python.memory_info().rss / 1024 / 1024
-                    cpu_usage = alive_python.cpu_percent(interval=1.0)
-                    print(f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                    print(f"Current memory usage: {mem_usage:.2f} MB ({mem_usage/1024:.2f} GB)", flush=True)
-                    print(f"CPU usage: {cpu_usage:.2f}%", flush=True)
-                except psutil.NoSuchProcess:
-                    print("Python process terminated", flush=True)
-                    break
-                time.sleep(interval)
-
         print("Start monitoring...", flush=True)
         stop_event = threading.Event()
         monitor_thread = threading.Thread(
-            target=background_monitoring,
-            args=(600, stop_event),
+            target=process_monitor,
+            args=(None, 600, None,stop_event),
             daemon=True,
         )
         monitor_thread.start()
@@ -218,6 +177,7 @@ def main():
             monitor_thread.join()
             print("Monitoring terminated", flush=True)
 
+        ## MaxRSS check will be done in the shell script
         print(f"CaImAn done at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
     else:
         raise ValueError(f"Algorithm {args.algo} not supported")

@@ -4,8 +4,8 @@
 #SBATCH --mem=240G
 #SBATCH -p short
 #SBATCH --job-name=CaImAn
-#SBATCH --output=/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/ROI_tracking_benchmarking/bin/slurm_output/CaImAn_%j.out
-#SBATCH --error=/n/data1/hms/neurobio/sabatini/gyu/roicat_benchmark/ROI_tracking_benchmarking/bin/slurm_output/CaImAn_%j.err
+
+set -e
 
 # Load modules
 module load gcc/14.2.0
@@ -40,7 +40,7 @@ echo "Job started at $(date '+%Y-%m-%d %H:%M:%S')"
 
 args=(
     python3 run_benchmark.py
-    --algo CellReg
+    --algo CaImAn
     --data-dir "$DATA_DIR"
     --output-dir "$OUTPUT_DIR"
 )
@@ -56,3 +56,7 @@ echo "Running: ${args[@]}"
 "${args[@]}"
 
 echo "Job done at $(date '+%Y-%m-%d %H:%M:%S')"
+
+echo "Check for MaxRSS"
+
+sstat -j $SLURM_JOB_ID --format=MaxRSS%30 -n --noconvert
