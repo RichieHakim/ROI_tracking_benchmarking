@@ -56,10 +56,3 @@ echo "Running: ${args[@]}"
 "${args[@]}"
 
 echo "Job done at $(date '+%Y-%m-%d %H:%M:%S')"
-
-echo "Check for MaxRSS"
-
-## Array job add
-sstat -j $SLURM_JOB_ID --format=MaxRSS%30 -n --noconvert
-
-## Maybe check memory usage for every 10 mins

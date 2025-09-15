@@ -2,7 +2,13 @@
 
 set -e
 
-module load matlab/2023b
+
+# Load modules
+module load gcc/14.2.0
+module load python/3.13.1
+module load conda/miniforge3/24.11.3-0
+
+conda activate caiman
 
 if [ -n "$SLURM_JOB_ID" ]; then
     echo "Running on SLURM"
@@ -19,9 +25,19 @@ else
     echo "Running locally"
     REPO_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && cd .. && pwd )
 fi
+
 echo "Repo directory: $REPO_DIR"
 cd $REPO_DIR
-echo "Current directory: $(pwd)"
-CELLREG_DIR="$REPO_DIR/roicat_benchmark/algos/CellReg"
-echo "CellReg directory: $CELLREG_DIR"
-matlab -nodesktop -batch "addpath(genpath('$CELLREG_DIR')); cellreg_cmd('$1')"
+
+PARAM_PATH=$1
+
+echo "Job started at $(date '+%Y-%m-%d %H:%M:%S')"
+
+args=(
+    python3 subprocess_caiman.py
+    --param-path "$PARAM_PATH"
+)
+
+echo "Running: ${args[@]}"
+
+"${args[@]}"

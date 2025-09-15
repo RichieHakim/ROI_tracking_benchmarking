@@ -391,7 +391,8 @@ if strcmp(alignment_type,'Translations and Rotations')
 end
 cell_registered_struct.adjustment_x_zero_padding=adjustment_zero_padding(1,:);
 cell_registered_struct.adjustment_y_zero_padding=adjustment_zero_padding(2,:);
-save(fullfile(results_directory,['cellRegistered_' datestr(clock,'yyyymmdd_HHMMss') '.mat']),'cell_registered_struct','-v7.3')
+% save(fullfile(results_directory,['cellRegistered_' datestr(clock,'yyyymmdd_HHMMss') '.mat']),'cell_registered_struct','-v7.3')
+save(fullfile(results_directory,'cellRegistered.mat'),'cell_registered_struct','-v7.3')
 
 % Saving a log file with all the chosen parameters:
 comments=''; % anything written here will be added to the log file

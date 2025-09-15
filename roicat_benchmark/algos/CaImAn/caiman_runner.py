@@ -8,7 +8,6 @@ import richfile as rf
 from pathlib import Path
 from roicat_benchmark.algos.CaImAn.caiman_tracking import register_ROIs
 
-
 def benchmark_caiman(params):
     data = rf.demo.RichFile_data(check=False,path=params["data_path"]).load()
 
@@ -25,7 +24,7 @@ def benchmark_caiman(params):
     template_images = data['FOV_images']
     dims = template_images[0].shape
 
-    spatial_union, assignments, matchings, warp_maps = register_multisession(
+    spatial_union, assignments, matchings, warped_footprints, warp_maps = register_multisession(
         spatial_footprints,
         dims,
         template_images,
@@ -40,12 +39,16 @@ def benchmark_caiman(params):
         "spatial_union": spatial_union,
         "assignments": assignments,
         "matchings": matchings,
+        "warped_footprints": warped_footprints,
         "warp_maps": warp_maps,
     }
 
-    rf.demo.RichFile_data(Path(params["output_dir"]) / "caiman_results.richfile").save(obj=caiman_results, overwrite=True)
-    print(f"Saved {Path(params['output_dir']) / 'caiman_results.richfile'}", flush=True)
+    save_name = Path(params["output_dir"]) / "raw_caiman_temp.richfile"
+    rf.demo.RichFile_data(str(save_name)).save(obj=caiman_results, overwrite=True)
+    print(f"Saved {save_name}", flush=True)
     print(f"CaImAn run done", flush=True)
+
+    return save_name
 
 def register_multisession(A,
                           dims,
@@ -119,7 +122,7 @@ def register_multisession(A,
     A = [a.toarray() if 'ndarray' not in str(type(a)) else a for a in A]
 
     A_union = A[0].copy()
-    matchings, warp_maps = [], []
+    matchings, warped_footprints, warp_maps = [], [], []
     matchings.append(list(range(A_union.shape[-1])))
 
     for sess in range(1, n_sessions):
@@ -145,6 +148,7 @@ def register_multisession(A,
         new_match[mat_sess] = mat_un
         new_match[nm_sess] = range(A2.shape[-1], A_union.shape[-1])
         matchings.append(new_match.tolist())
+        warped_footprints.append(A2)
         warp_maps.append(warp_map)
         if plot_results:
             fig.suptitle(f"Session {sess}", fontsize=24, fontweight="bold")
@@ -157,4 +161,4 @@ def register_multisession(A,
     for sess in range(n_sessions):
         assignments[matchings[sess], sess] = range(len(matchings[sess]))
 
-    return A_union, assignments, matchings, warp_maps
+    return A_union, assignments, matchings, warped_footprints, warp_maps

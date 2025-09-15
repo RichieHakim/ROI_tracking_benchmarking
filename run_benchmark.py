@@ -1,19 +1,29 @@
 import subprocess
 import threading
+import multiprocessing
 import time
 
 import os
+import sys
 import argparse
+
 from pathlib import Path
-from scipy.io import savemat
+from scipy.io import savemat as scipy_savemat
+
+import richfile as rf
 
 from roicat_benchmark.algos.CaImAn.caiman_runner import benchmark_caiman
 from roicat_benchmark.utils.sample_param_maker import cellreg_param_maker
-from roicat_benchmark.utils.utils import process_monitor, popen_reader
+from roicat_benchmark.utils.utils import run_subprocess, process_monitor, popen_reader, output_maker
 
 def main():
     ## TODO: This would be where we let hyperparameter optimizers to choose the best parameters
     ## For now, we just load the default parameters
+
+    ## TODO: For memory and cpu usage...should we just submit additional jobs? Maybe that'd be the best way to go,...
+    ## TODO: ...with output handling.
+
+    ## TODO: Add jobid to the output
     parser = argparse.ArgumentParser()
     parser.add_argument("--algo", type=str, required=True, choices=["CellReg", "CaImAn"])
     parser.add_argument("--data-dir", dest="data_dir", type=str, required=False, default=None)
@@ -76,48 +86,83 @@ def main():
 
         print(params, flush=True)
 
-        param_path = args.output_dir / "cellreg_params.mat"
-        savemat(param_path, params)
+        param_path = cellreg_output_dir / "cellreg_params.mat"
+        scipy_savemat(param_path, params)
         print(f"Saved {param_path}", flush=True)
+
+        print("Start Manager and subprocess...", flush=True)
+        benchmark_manager = multiprocessing.Manager()
+        stdout_queue = multiprocessing.Queue()
+        stderr_queue = multiprocessing.Queue()
+        monitor_result = benchmark_manager.dict({
+            "return_code": None,
+            "maxrss": None,
+            "cpu_time": None,
+            "cpu_usage": None,
+            "start_time": None,
+            "end_time": None,
+            "success": False,
+            "error": None,
+        })
 
         ## Initialize the subprocess for CellReg
         print("Initialize subprocess...", flush=True)
         script_path = f"{current_dir}/bin/cellreg_slurm_local.sh"
-        alive_process = subprocess.Popen(
-            ["bash", script_path, str(param_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
+        benchmark_proc = multiprocessing.Process(
+            target=run_subprocess,
+            args=(script_path, param_path, "matlab", monitor_result, stdout_queue, stderr_queue),
+            daemon=True,
+        )
+        benchmark_proc.start()
+
+        ## Print queues
+        while benchmark_proc.is_alive():
+            ## Get stdout
+            try:
+                _, stdout_line = stdout_queue.get(timeout=1)
+                print(f"stdout: {stdout_line}", flush=True)
+            except multiprocessing.queues.Empty:
+                pass
+            except Exception as e:
+                print(f"Error: {e}", flush=True)
+                break
+            ## Get stderr
+            try:
+                _, stderr_line = stderr_queue.get(timeout=1)
+                print(f"stderr: {stderr_line}", flush=True)
+            except multiprocessing.queues.Empty:
+                pass
+            except Exception as e:
+                print(f"Error: {e}", flush=True)
+                break
+        else:
+            ## Done!
+            ## Let's clear queue first
+            print("Clearing queues...", flush=True)
+            while not stdout_queue.empty():
+                _, stdout_line = stdout_queue.get()
+                print(f"stdout: {stdout_line}", flush=True)
+            while not stderr_queue.empty():
+                _, stderr_line = stderr_queue.get()
+                print(f"stderr: {stderr_line}", flush=True)
+
+        benchmark_proc.join()
+        num_cpus = os.cpu_count()
+        monitor_result["num_cpus"] = num_cpus
+        monitor_path = cellreg_output_dir / "tracked_resources.richfile"
+        rf.demo.RichFile_data(path=str(monitor_path)).save(obj=dict(monitor_result), overwrite=True)
+        print(f"Saved {monitor_path}", flush=True)
+
+        ## Submit output generator job, if running on non-interactive SLURM job
+        cellreg_output_file = cellreg_output_dir / "cellRegistered.mat"
+        output_maker(
+            current_dir=current_dir,
+            algo="CellReg",
+            result_file=str(cellreg_output_file),
         )
 
-        ## Threads for readout
-        stdout_thread, stderr_thread = popen_reader(alive_process)
-
-        stdout_thread.start()
-        stderr_thread.start()
-
-        ## Wait for process to start
-        time.sleep(10)
-
-        ## Start monitoring the process
-        process_monitor(
-            process_to_monitor=alive_process,
-            interval=600,
-            child_name="matlab",
-            stop_event=None,
-        )
-
-        ## Wait for the process to finish
-        return_code = alive_process.wait()
-        print(f"Process terminated with return code {return_code}", flush=True)
-
-        stdout_thread.join()
-        stderr_thread.join()
-
-        ## MaxRSS check will be done in the shell script
-        print("Monitoring terminated", flush=True)
+        ## output_maker should terminate the job anyway...
+        sys.exit(0)
         
     elif args.algo == "CaImAn":
         caiman_output_dir = args.output_dir / "CaImAn_output"
@@ -131,13 +176,16 @@ def main():
         print(f"Output directory: {caiman_output_dir}", flush=True)
         caiman_output_dir.mkdir(parents=True, exist_ok=True)
 
+        ## Search for single data file
+        ## If args.data_dir is already a file, then just use it
+        ## Otherwise, search for the pattern
         caiman_patterns = list(map(lambda x: x.split(".")[0] + ".richfile", args.pattern_to_search))
         print(f"For CaImAn, searching for {caiman_patterns}", flush=True)
         params = {}
         params["data_dir"] = str(args.data_dir)
         if args.data_dir.suffix == ".richfile":
             ## Input args.data_dir is a richfile
-            params["data_path"] = args.data_dir
+            params["data_path"] = str(args.data_dir)
         else:
             ## Input args.data_dir is a directory.
             ## Search for a single richfile.
@@ -150,35 +198,83 @@ def main():
                 raise ValueError(f"Multiple richfiles found in {args.data_dir}. Please specify with --pattern-to-search")
             else:
                 print(f"Found {richfiles[0]}", flush=True)
-                params["data_path"] = richfiles[0]
+                params["data_path"] = str(richfiles[0])
+        print(f"Use data path: {params['data_path']}", flush=True)
 
         params["output_dir"] = str(caiman_output_dir)
         params["plot_results"] = args.plot_results
         params["max_thr"] = 0
         params["thresh_cost"] = 0.7
         params["max_dist"] = 10
+        param_path = caiman_output_dir / "caiman_params.richfile"
+        print(f"Saved {param_path}", flush=True)
+        rf.demo.RichFile_data(path=str(param_path)).save(obj=params, overwrite=True)
 
-        print("Start monitoring...", flush=True)
-        stop_event = threading.Event()
-        monitor_thread = threading.Thread(
-            target=process_monitor,
-            args=(None, 600, None,stop_event),
+
+        print("Start Manager and subprocess...", flush=True)
+        benchmark_manager = multiprocessing.Manager()
+        stdout_queue = multiprocessing.Queue()
+        stderr_queue = multiprocessing.Queue()
+        monitor_result = benchmark_manager.dict({
+            "return_code": None,
+            "maxrss": None,
+            "cpu_time": None,
+            "cpu_usage": None,
+            "start_time": None,
+            "end_time": None,
+            "success": False,
+            "error": None,
+        })
+
+        ## Prepare args
+        script_path = f"{current_dir}/bin/caiman_slurm_local.sh"
+        benchmark_proc = multiprocessing.Process(
+            target=run_subprocess,
+            args=(script_path, param_path, "python", monitor_result, stdout_queue, stderr_queue),
             daemon=True,
         )
-        monitor_thread.start()
+        benchmark_proc.start()
 
-        print(f"CaImAn started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-        try:
-            benchmark_caiman(params)
-        except Exception as e:
-            print(f"CaImAn failed: {e}", flush=True)
-        finally:
-            stop_event.set()
-            monitor_thread.join()
-            print("Monitoring terminated", flush=True)
+        ## Print queues
+        while benchmark_proc.is_alive():
+            ## Get stdout
+            try:
+                _, stdout_line = stdout_queue.get(timeout=1)
+                print(f"stdout: {stdout_line}", flush=True)
+            except multiprocessing.queues.Empty:
+                pass
+            except Exception as e:
+                print(f"Error: {e}", flush=True)
+                break
+            ## Get stderr
+            try:
+                _, stderr_line = stderr_queue.get(timeout=1)
+                print(f"stderr: {stderr_line}", flush=True)
+            except multiprocessing.queues.Empty:
+                pass
+            except Exception as e:
+                print(f"Error: {e}", flush=True)
+                break
+        else:
+            ## Done!
+            ## Let's clear queue first
+            print("Clearing queues...", flush=True)
+            while not stdout_queue.empty():
+                _, stdout_line = stdout_queue.get()
+                print(f"stdout: {stdout_line}", flush=True)
+            while not stderr_queue.empty():
+                _, stderr_line = stderr_queue.get()
+                print(f"stderr: {stderr_line}", flush=True)
 
-        ## MaxRSS check will be done in the shell script
-        print(f"CaImAn done at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+        benchmark_proc.join()
+        num_cpus = os.cpu_count()
+        monitor_result["num_cpus"] = num_cpus
+        monitor_path = caiman_output_dir / "tracked_resources.richfile"
+        rf.demo.RichFile_data(path=str(monitor_path)).save(obj=dict(monitor_result), overwrite=True)
+        print(f"Saved {monitor_path}", flush=True)
+
+        sys.exit(0)
+
     else:
         raise ValueError(f"Algorithm {args.algo} not supported")
 

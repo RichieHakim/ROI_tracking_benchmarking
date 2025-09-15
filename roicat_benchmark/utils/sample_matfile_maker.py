@@ -62,7 +62,7 @@ def save_matfile(single_data_path, single_output_dir, filename):
         n_neurons = session.shape[0]
         footprints_shape = session.toarray().reshape(n_neurons, FOV_hw[0], FOV_hw[1]).shape
         
-        mat_file_name = single_output_dir / f"{filename}_footprint_{ii+1:04d}.mat"
+        mat_file_name = single_output_dir / f"{filename}_{ii+1:04d}.mat"
         
         ## Save dummy file for MatLab header
         hdf5storage.savemat(str(mat_file_name), {})

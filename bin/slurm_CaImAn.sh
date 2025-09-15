@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 4
 #SBATCH -t 0-08:00
-#SBATCH --mem=240G
+#SBATCH --mem=249G
 #SBATCH -p short
 #SBATCH --job-name=CaImAn
 
@@ -56,7 +56,3 @@ echo "Running: ${args[@]}"
 "${args[@]}"
 
 echo "Job done at $(date '+%Y-%m-%d %H:%M:%S')"
-
-echo "Check for MaxRSS"
-
-sstat -j $SLURM_JOB_ID --format=MaxRSS%30 -n --noconvert
