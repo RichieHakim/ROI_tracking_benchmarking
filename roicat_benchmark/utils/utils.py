@@ -1,6 +1,8 @@
 import os
 import sys
 from pathlib import Path
+import json
+import itertools
 import subprocess
 import threading
 import multiprocessing
@@ -306,3 +308,42 @@ def split_common_different_paths(path_list: list[Path]):
     part_dirs = [ep.parent for ep in each_paths]
     
     return common_path, part_dirs, each_paths
+
+def create_sweep_grid(params_path: Path, algo: str):
+    """
+    Split the params file into a list of params.
+    Assume single depth per algo. Susceptible to nested param sets.
+    """
+    with open(str(params_path), "r") as param_handle:
+        sweep_params = json.load(param_handle)
+    
+    if algo not in sweep_params:
+        raise ValueError(f"Parameter set for {algo} not found in params file {params_path}")
+    
+    algo_sweep_params = sweep_params[algo]
+    keys = list(algo_sweep_params.keys())
+    values = [algo_sweep_params[key] for key in keys]
+    sweep_grid = list(dict(zip(keys, sets)) for sets in itertools.product(*values))
+    return sweep_grid
+
+def create_sweep_log(sweep_grid, log_path):
+    with open(str(log_path), "w") as log_handle:
+        for ii, param_set in enumerate(sweep_grid):
+            this_line = {
+                "sweep_id": ii,
+                **param_set,
+            }
+            log_handle.write(json.dumps(this_line) + "\n")
+
+def line_load_params(log_path: Path, line_id: int):
+    """
+    We use index -1 to indicate no array job. For no array job, just use the first parameter set.
+    """
+    if line_id < 0:
+        line_id = 0
+
+    with open(str(log_path), "r") as log_handle:
+        for ii, line in enumerate(log_handle):
+            if ii == line_id:
+                return json.loads(line)
+

@@ -8,6 +8,7 @@ import scipy.sparse as sparse
 from scipy.io import loadmat as loadmat_scipy
 
 import richfile as rf
+import natsort
 
 def main():
     parser = argparse.ArgumentParser()
@@ -52,11 +53,13 @@ def main():
             for session_ref in handle['cell_registered_struct']['centroid_locations_corrected'][0]:
                 ## Generate default ucids: ROI-length array of -1
                 default_ucids_bySession.append(np.full(handle['cell_registered_struct'][session_ref][:].shape[1], -1))
-            output_preset["warp_field"] = handle['cell_registered_struct']['displacement_fields'][:]
+            disp_xs, disp_ys = handle['cell_registered_struct']['displacement_fields'][:]
+            cellreg_warp_field = [np.stack([disp_xs[...,sess_idx], disp_ys[...,sess_idx]], axis=-1) for sess_idx in range(disp_xs.shape[-1])]
+            output_preset["warp_field"] = cellreg_warp_field
 
         ## Load corrected footprints to sparse csc matrix
         corrected_footprints = []
-        corrected_footprints_path = list(algo_output.parent.glob("spatial_footprints_corrected_*.mat"))
+        corrected_footprints_path = natsort.natsorted(list(algo_output.parent.glob("spatial_footprints_corrected_*.mat")))
         for corrected_footprint_path in corrected_footprints_path:
             ## Match CaImAn's format; (flattened_pixels, # of components)
             print(f"Loading corrected footprints from {corrected_footprint_path}", flush=True)
@@ -66,7 +69,9 @@ def main():
             each_component = [corrected_footprint[0,ii].reshape(H*W, 1) for ii in range(n_components)]
             reshaped_footprint = sparse.csc_matrix(sparse.hstack(each_component))
             corrected_footprints.append(reshaped_footprint)
+        corrected_footprints_path_str = [str(corrected_footprint_path) for corrected_footprint_path in corrected_footprints_path]
         output_preset["warped_footprints"] = corrected_footprints
+        output_preset["corrected_footprints_path"] = corrected_footprints_path_str
 
         ## Assign cluster ids to each rois
         ucids_bySession = generate_ucids_bySession(cell_to_index_map, default_ucids_bySession)
@@ -87,8 +92,6 @@ def main():
         ## Load the output
         caiman_output = rf.demo.RichFile_data(check=False,path=algo_output)
         assignments = np.nan_to_num(caiman_output["assignments"].load(), nan=-1) + 1
-        warped_footprints = caiman_output["warped_footprints"].load()
-        warp_field = caiman_output["warp_maps"].load()
 
         ## Create ucids_bySession
         default_ucids_bySession = []
@@ -97,8 +100,9 @@ def main():
 
         ucids_bySession = generate_ucids_bySession(assignments, default_ucids_bySession)
         output_preset["ucids_bySession"] = ucids_bySession
-        output_preset["warped_footprints"] = warped_footprints
-        output_preset["warp_field"] = warp_field
+        
+        output_preset["warped_footprints"] = []
+        output_preset["warp_field"] = caiman_output["warp_maps"].load()
 
     ## Common loading
 
@@ -107,6 +111,11 @@ def main():
     print(f"Loading resources from {resources_path}", flush=True)
     tracked_resources = rf.demo.RichFile_data(check=False,path=str(resources_path)).load()
 
+    ## Preset of sacct metrics
+    tracked_resources["sacct_maxrss"] = 0
+    tracked_resources["sacct_cpu_time"] = 0
+    tracked_resources["raw_sacct_output"] = None
+
     ## Check MaxRSS and computation performance metrics
     if args.job_id is not None:
         job_id = args.job_id
@@ -114,19 +123,47 @@ def main():
             maxrss_output = subprocess.check_output(
                 ['sacct', '-j', job_id, '--format=MaxRSS%30', '-n', '--noconvert']
             ).decode().strip()
+            print(f"sacct_output: {maxrss_output}", flush=True)
+            tracked_resources["raw_sacct_output"] = maxrss_output
             MaxRSS = int(maxrss_output.split()[0])
-            print(f"Sacct MaxRSS: {MaxRSS / (1024**2)} MB, {MaxRSS / (1024**3)} GB", flush=True)
             tracked_resources["sacct_maxrss"] = MaxRSS
-        except ValueError as e:
-            print(f"Formatting issues expected for MaxRSS", flush=True)
+            print(f"Sacct MaxRSS: {MaxRSS / (1024**2)} MB, {MaxRSS / (1024**3)} GB", flush=True)
+
+            ## Get job-related CPU time
+            cpu_usage = subprocess.check_output(
+                ['sacct', '-j', job_id, '--format=UserCPU%30', '-n', '--noconvert']
+            ).decode().strip()
+            print(f"CPUTime sacct_output: {cpu_usage}", flush=True)
+            CPUUsage = cpu_usage.split()[0]
+            days = 0
+            if '-' in CPUUsage:
+                days, CPUUsage = CPUUsage.split('-')
+            parts = CPUUsage.split(':')
+            if len(parts) == 3:
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                seconds = float(parts[2])
+            elif len(parts) == 2:
+                hours = 0
+                minutes = int(parts[0])
+                seconds = float(parts[1])
+            else:   
+                raise ValueError(f"Invalid CPUUsage format: {CPUUsage}")
+            total_seconds = int(days) * 24 * 3600 + hours * 3600 + minutes * 60 + seconds
+            print(f"Sacct CPU Time: {total_seconds} seconds", flush=True)
+            tracked_resources["sacct_cpu_time"] = total_seconds
+        except Exception as e:
+            print(f"Formatting issues for MaxRSS: {e}", flush=True)
             sacct_output = subprocess.check_output(
-                ['sacct', '-j', job_id, '--allsteps']
+                ['sacct', '-j', job_id, '--format=MaxRSS%30', '-n', '--noconvert']
             ).decode().strip()
             print(f"sacct_output: {sacct_output}", flush=True)
-            tracked_resources["sacct_maxrss"] = 0
+            tracked_resources["raw_sacct_output"] = sacct_output
     else:
         job_id = 0
+        tracked_resources["raw_sacct_output"] = ""
         tracked_resources["sacct_maxrss"] = 0
+        tracked_resources["sacct_cpu_time"] = 0
     output_preset["resources"] = tracked_resources
 
     ## Save output

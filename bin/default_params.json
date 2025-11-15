@@ -1,0 +1,16 @@
+{
+    "CellReg": {
+        "microns_per_pixel": [1.2],
+        "transformation_smoothness": [2.0],
+        "p_same_certainty_threshold": [0.95],
+        "p_same_threshold": [0.5],
+        "sufficient_correlation_centroids": [0.2],
+        "sufficient_correlation_footprints": [0.3],
+        "registration_approach": ["Simple threshold"]
+    },
+    "CaImAn": {
+        "max_thr": [0.0],
+        "thresh_cost": [0.7],
+        "max_dist": [10]
+    }
+}

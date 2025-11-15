@@ -10,11 +10,12 @@ import argparse
 from pathlib import Path
 from scipy.io import savemat as scipy_savemat
 
+import json
 import richfile as rf
 
 from roicat_benchmark.algos.CaImAn.caiman_runner import benchmark_caiman
 from roicat_benchmark.utils.sample_param_maker import cellreg_param_maker
-from roicat_benchmark.utils.utils import run_subprocess, process_monitor, popen_reader, output_maker
+from roicat_benchmark.utils.utils import run_subprocess, process_monitor, popen_reader, output_maker, line_load_params
 
 def main():
     ## TODO: This would be where we let hyperparameter optimizers to choose the best parameters
@@ -38,9 +39,11 @@ def main():
     else:
         args.data_dir = Path(args.data_dir)
     if args.output_dir is None:
-        args.output_dir = current_dir / "demo_output"
+        args.output_dir = current_dir / "demo_output" / f"{args.algo}_output"
     else:
         args.output_dir = Path(args.output_dir)
+
+    sweep_param_path = args.output_dir / f"{args.algo}_sweep_log.json"
 
     print(f"Running {args.algo}", flush=True)
     print(f"Data directory: {args.data_dir}", flush=True)
@@ -51,16 +54,17 @@ def main():
     
     if args.algo == "CellReg":
         ## Default output directory
-        cellreg_output_dir = args.output_dir / "CellReg_output"
-
         ## Check for array job
         if "SLURM_JOB_ID" in os.environ:
             job_id = os.environ["SLURM_JOB_ID"]
             if "SLURM_ARRAY_TASK_ID" in os.environ:
                 array_id = os.environ["SLURM_ARRAY_TASK_ID"]
             else:
-                array_id = "0"
-            cellreg_output_dir = cellreg_output_dir / f"JobId_{job_id}_{array_id}"
+                array_id = "-1"
+        else:
+            job_id = "-1"
+            array_id = "-1"
+        cellreg_output_dir = args.output_dir / f"JobId_{job_id}_{array_id}"
         cellreg_output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Output directory: {cellreg_output_dir}", flush=True)
 
@@ -68,21 +72,17 @@ def main():
         cellreg_patterns = list(map(lambda x: x.split(".")[0] + ".mat", args.pattern_to_search))
         print(f"For CellReg, searching for {cellreg_patterns}", flush=True)
 
-        args.output_dir.mkdir(parents=True, exist_ok=True)
         params = cellreg_param_maker(
             data_dir=args.data_dir,
             output_dir=cellreg_output_dir,
             pattern_to_search=cellreg_patterns)
 
         ## TODO: Seems like CellReg only uses centroid models for 2p data. Check this in GUI.
+        ## Take hyperparameters
+        sweep_param_set = line_load_params(sweep_param_path, array_id)
+        for key, value in sweep_param_set.items():
+            params[key] = value
         params["plot_results"] = args.plot_results
-        params["microns_per_pixel"] = 1.2
-        params["transformation_smoothness"] = 2.0
-        params["p_same_certainty_threshold"] = 0.95
-        params["p_same_threshold"] = 0.5
-        params["sufficient_correlation_centroids"] = 0.2
-        params["sufficient_correlation_footprints"] = 0.3
-        params["registration_approach"] = "Simple threshold"
 
         print(params, flush=True)
 
@@ -165,16 +165,18 @@ def main():
         sys.exit(0)
         
     elif args.algo == "CaImAn":
-        caiman_output_dir = args.output_dir / "CaImAn_output"
         if "SLURM_JOB_ID" in os.environ:
             job_id = os.environ["SLURM_JOB_ID"]
             if "SLURM_ARRAY_TASK_ID" in os.environ:
                 array_id = os.environ["SLURM_ARRAY_TASK_ID"]
             else:
-                array_id = "0"
-            caiman_output_dir = caiman_output_dir / f"JobId_{job_id}_{array_id}"
-        print(f"Output directory: {caiman_output_dir}", flush=True)
+                array_id = "-1"
+        else:
+            job_id = "-1"
+            array_id = "-1"
+        caiman_output_dir = args.output_dir / f"JobId_{job_id}_{array_id}"
         caiman_output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Output directory: {caiman_output_dir}", flush=True)
 
         ## Search for single data file
         ## If args.data_dir is already a file, then just use it
@@ -203,9 +205,16 @@ def main():
 
         params["output_dir"] = str(caiman_output_dir)
         params["plot_results"] = args.plot_results
+        ## These tends to be the default values for CaImAn.
         params["max_thr"] = 0
         params["thresh_cost"] = 0.7
         params["max_dist"] = 10
+
+        ## Take hyperparameters
+        sweep_param_set = line_load_params(sweep_param_path, array_id)
+        for key, value in sweep_param_set.items():
+            params[key] = value
+
         param_path = caiman_output_dir / "caiman_params.richfile"
         print(f"Saved {param_path}", flush=True)
         rf.demo.RichFile_data(path=str(param_path)).save(obj=params, overwrite=True)

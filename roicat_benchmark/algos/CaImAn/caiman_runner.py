@@ -7,6 +7,7 @@ import logging
 import richfile as rf
 from pathlib import Path
 from roicat_benchmark.algos.CaImAn.caiman_tracking import register_ROIs
+import scipy.sparse as sparse
 
 def benchmark_caiman(params):
     data = rf.demo.RichFile_data(check=False,path=params["data_path"]).load()
@@ -24,14 +25,16 @@ def benchmark_caiman(params):
     template_images = data['FOV_images']
     dims = template_images[0].shape
 
-    spatial_union, assignments, matchings, warped_footprints, warp_maps = register_multisession(
+    spatial_union, assignments, matchings, caiman_performance, warp_maps = register_multisession(
         spatial_footprints,
         dims,
         template_images,
         max_thr=params["max_thr"],
         thresh_cost=params["thresh_cost"],
         max_dist=params["max_dist"],
-        plot_results=params["plot_results"],
+        # plot_results=params["plot_results"],
+        ## 20251030: A bit unfair, but force not to plot the results
+        plot_results=False,
         plot_save_dir=params["output_dir"]
     )
 
@@ -39,8 +42,12 @@ def benchmark_caiman(params):
         "spatial_union": spatial_union,
         "assignments": assignments,
         "matchings": matchings,
-        "warped_footprints": warped_footprints,
+        "warped_footprints": None,
         "warp_maps": warp_maps,
+        "caiman_performance": caiman_performance,
+        "dims": template_images[0].shape,
+        "template_images": template_images,
+        "params": params,
     }
 
     save_name = Path(params["output_dir"]) / "raw_caiman_temp.richfile"
@@ -122,7 +129,7 @@ def register_multisession(A,
     A = [a.toarray() if 'ndarray' not in str(type(a)) else a for a in A]
 
     A_union = A[0].copy()
-    matchings, warped_footprints, warp_maps = [], [], []
+    matchings, caiman_performance, warp_maps = [], [], []
     matchings.append(list(range(A_union.shape[-1])))
 
     for sess in range(1, n_sessions):
@@ -139,7 +146,7 @@ def register_multisession(A,
                                     enclosed_thr=enclosed_thr,
                                     plot_results=plot_results)
 
-        mat_sess, mat_un, nm_sess, nm_un, _, A2, warp_map, fig = reg_results
+        mat_sess, mat_un, nm_sess, nm_un, performance, A2, warp_map, fig = reg_results
         logger.info(len(mat_sess))
         A_union = A2.copy()
         A_union[:, mat_un] = A[sess][:, mat_sess]
@@ -148,17 +155,18 @@ def register_multisession(A,
         new_match[mat_sess] = mat_un
         new_match[nm_sess] = range(A2.shape[-1], A_union.shape[-1])
         matchings.append(new_match.tolist())
-        warped_footprints.append(A2)
+        caiman_performance.append(performance)
         warp_maps.append(warp_map)
-        if plot_results:
-            fig.suptitle(f"Session {sess}", fontsize=24, fontweight="bold")
-            fig.tight_layout()
-            fig_title = Path(plot_save_dir) / f"caiman_registration_results_session_{sess}.png"
-            fig.savefig(fig_title)
-            print(f"Saved {fig_title}", flush=True)
+        print(f"Caiman Session {sess} done", flush=True)
+        # if plot_results:
+        #     fig.suptitle(f"Session {sess}", fontsize=24, fontweight="bold")
+        #     fig.tight_layout()
+        #     fig_title = Path(plot_save_dir) / f"caiman_registration_results_session_{sess}.png"
+        #     fig.savefig(fig_title)
+        #     print(f"Saved {fig_title}", flush=True)
 
     assignments = np.empty((A_union.shape[-1], n_sessions)) * np.nan
     for sess in range(n_sessions):
         assignments[matchings[sess], sess] = range(len(matchings[sess]))
 
-    return A_union, assignments, matchings, warped_footprints, warp_maps
+    return A_union, assignments, matchings, caiman_performance, warp_maps

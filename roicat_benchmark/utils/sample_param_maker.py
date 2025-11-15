@@ -26,6 +26,7 @@ def cellreg_param_maker(data_dir, output_dir=None, pattern_to_search=None):
     print(f"Found {len(matfiles_to_search)} matfiles for CellReg", flush=True)
     print(f"Matfiles for CellReg: {matfiles_to_search}", flush=True)
 
+    ## Add default param set
     params={}
     params["data_dir"] = str(data_dir)
     params["data_path"] = matfiles_to_search

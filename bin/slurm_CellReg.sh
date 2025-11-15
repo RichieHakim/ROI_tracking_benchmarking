@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -c 4
-#SBATCH -t 1-00:00
-#SBATCH --mem=32G
+#SBATCH -t 2-00:00
+#SBATCH --mem=128G
 #SBATCH -p medium
 #SBATCH --job-name=CellReg
 
@@ -32,8 +32,9 @@ cd $REPO_DIR
 
 DATA_DIR=$1
 OUTPUT_DIR=$2
+plot_results=$3
 
-shift 2
+shift 3
 PATTERNS=("$@")
 
 echo "Job started at $(date '+%Y-%m-%d %H:%M:%S')"
@@ -49,7 +50,9 @@ for pattern in "${PATTERNS[@]}"; do
     args+=(--pattern-to-search "$pattern")
 done
 
-args+=(--plot-results)
+if [ "$plot_results" == "True" ]; then
+    args+=(--plot-results)
+fi
 
 echo "Running: ${args[@]}"
 
