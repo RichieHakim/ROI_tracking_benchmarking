@@ -171,6 +171,12 @@ def main():
     print(f"Saving output to {rf_save_path}", flush=True)
     rf.demo.RichFile_data(path=str(rf_save_path)).save(output_preset, overwrite=True)
 
+    ## Copy to collection bin
+    collection_bin_path = algo_output.parent.parent / "collection_bin"
+    collection_bin_path.mkdir(parents=True, exist_ok=True)
+    collection_save_path = collection_bin_path / f"{args.algo}_output_{job_id}.richfile"
+    rf.demo.RichFile_data(path=str(collection_save_path)).save(output_preset, overwrite=True)
+
 def generate_ucids_bySession(assignments, ucids_bySession):
     """
     assignments: (n_clusters, n_sessions)

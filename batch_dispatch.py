@@ -87,6 +87,7 @@ def main():
             shutil.copy(args.params_path, sweep_params_path)
 
         ## Flag for overwriting previous runs
+        ## TODO: Allow for partial reruns. Only matters when some hyperparameter sweep runs fail.
         algo_output_dir = this_output_dir / f"{args.algo}_output"
         algo_output_dir.mkdir(parents=True, exist_ok=True)
         expected_output_name = f"{args.algo}_output_*.richfile"
@@ -112,15 +113,18 @@ def main():
         elif args.algo == "CellReg":
             this_stem = sweep_data_path.stem
             this_pattern_to_search = this_stem + "_[0-9]*.mat"
+
+        ## Gather slurm output
+        slurm_output_dir = algo_output_dir / "slurm_bin"
         ## Prepare job command
         submit_command = [
             "sbatch",
             "--array",
-            f"1-{num_sweeps}",
+            f"0-{num_sweeps-1}",
             "--output",
-            f"{str(this_output_dir)}/runner_%A_%a.out",
+            f"{str(slurm_output_dir)}/runner_%A_%a.out",
             "--error",
-            f"{str(this_output_dir)}/runner_%A_%a.err",            
+            f"{str(slurm_output_dir)}/runner_%A_%a.err",            
         ]
         if args.partition is not None:
             submit_command.extend(["-p", args.partition])

@@ -79,7 +79,7 @@ def main():
 
         ## TODO: Seems like CellReg only uses centroid models for 2p data. Check this in GUI.
         ## Take hyperparameters
-        sweep_param_set = line_load_params(sweep_param_path, array_id)
+        sweep_param_set = line_load_params(sweep_param_path, int(array_id))
         for key, value in sweep_param_set.items():
             params[key] = value
         params["plot_results"] = args.plot_results
@@ -211,7 +211,7 @@ def main():
         params["max_dist"] = 10
 
         ## Take hyperparameters
-        sweep_param_set = line_load_params(sweep_param_path, array_id)
+        sweep_param_set = line_load_params(sweep_param_path, int(array_id))
         for key, value in sweep_param_set.items():
             params[key] = value
 
