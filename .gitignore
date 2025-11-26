@@ -172,4 +172,6 @@ cython_debug/
 *.gz
 
 slurm_output/
-test/
+*.mat
+*.richfile
+test/*.py

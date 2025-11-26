@@ -15,7 +15,7 @@ import richfile as rf
 
 from roicat_benchmark.algos.CaImAn.caiman_runner import benchmark_caiman
 from roicat_benchmark.utils.sample_param_maker import cellreg_param_maker
-from roicat_benchmark.utils.utils import run_subprocess, process_monitor, popen_reader, output_maker, line_load_params
+from roicat_benchmark.utils.utils import run_subprocess, process_monitor, popen_reader, output_maker, line_load_params, get_slurm_jobid
 
 def main():
     ## TODO: This would be where we let hyperparameter optimizers to choose the best parameters
@@ -52,18 +52,11 @@ def main():
     if args.pattern_to_search is None:
         args.pattern_to_search = ["*"]
     
+    ## Check slurm env
+    job_id, array_id = get_slurm_jobid()
     if args.algo == "CellReg":
         ## Default output directory
         ## Check for array job
-        if "SLURM_JOB_ID" in os.environ:
-            job_id = os.environ["SLURM_JOB_ID"]
-            if "SLURM_ARRAY_TASK_ID" in os.environ:
-                array_id = os.environ["SLURM_ARRAY_TASK_ID"]
-            else:
-                array_id = "-1"
-        else:
-            job_id = "-1"
-            array_id = "-1"
         cellreg_output_dir = args.output_dir / f"JobId_{job_id}_{array_id}"
         cellreg_output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Output directory: {cellreg_output_dir}", flush=True)
@@ -165,15 +158,6 @@ def main():
         sys.exit(0)
         
     elif args.algo == "CaImAn":
-        if "SLURM_JOB_ID" in os.environ:
-            job_id = os.environ["SLURM_JOB_ID"]
-            if "SLURM_ARRAY_TASK_ID" in os.environ:
-                array_id = os.environ["SLURM_ARRAY_TASK_ID"]
-            else:
-                array_id = "-1"
-        else:
-            job_id = "-1"
-            array_id = "-1"
         caiman_output_dir = args.output_dir / f"JobId_{job_id}_{array_id}"
         caiman_output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Output directory: {caiman_output_dir}", flush=True)

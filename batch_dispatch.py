@@ -32,7 +32,7 @@ def main():
         args.output_dir = Path(args.output_dir)
 
     if args.pattern_to_search is None:
-        args.pattern_to_search = ["data_roicat", "data_roicat_prealigned", "data_roicat_partial"]
+        args.pattern_to_search = ["data_roicat", "data_roicat_prealigned", "data_roicat_partial", "data_roicat_test"]
 
     if args.params_path is None:
         args.params_path = current_dir / "bin" / "default_params.json"
@@ -59,6 +59,7 @@ def main():
             print(f"Found {sweep_data}", flush=True)
 
     ## How many sweeps are there?
+    ## It is a preset of the hyperparameter grid, will be applied to each dataset.
     sweep_grid = create_sweep_grid(args.params_path, args.algo)
     num_sweeps = len(sweep_grid)
     print(f"Number of Hyperparameter sweeps: {num_sweeps}", flush=True)
@@ -87,25 +88,30 @@ def main():
             shutil.copy(args.params_path, sweep_params_path)
 
         ## Flag for overwriting previous runs
-        ## TODO: Allow for partial reruns. Only matters when some hyperparameter sweep runs fail.
         algo_output_dir = this_output_dir / f"{args.algo}_output"
         algo_output_dir.mkdir(parents=True, exist_ok=True)
-        expected_output_name = f"{args.algo}_output_*.richfile"
-        algo_outputs = list(algo_output_dir.rglob(expected_output_name))
-        print(f"Searching for expected output files: {expected_output_name} in {algo_output_dir}", flush=True)
-        print(f"Checking if output files exist: {algo_outputs}", flush=True)
-        if len(algo_outputs) != 0:
-            if not args.overwrite:
-                print(f"Skip this job...", flush=True)
-                print(f"If you want to overwrite, use --overwrite", flush=True)
-                continue
-            else:
-                print(f"Rerunning or overwriting {algo_outputs}", flush=True)
+
+        ## NOTE Legacy: single job overwrite.
+        # expected_output_name = f"{args.algo}_output_*.richfile"
+        # algo_outputs = list(algo_output_dir.rglob(expected_output_name))
+        # print(f"Searching for expected output files: {expected_output_name} in {algo_output_dir}", flush=True)
+        # print(f"Checking if output files exist: {algo_outputs}", flush=True)
+        # if len(algo_outputs) != 0:
+        #     if not args.overwrite:
+        #         print(f"Skip this job...", flush=True)
+        #         print(f"If you want to overwrite, use --overwrite", flush=True)
+        #         continue
+        #     else:
+        #         print(f"Rerunning or overwriting {algo_outputs}", flush=True)
 
         ## Create sweep log
+        ## This is to assign hyperparameter grid to each dataset.
         sweep_log_path = algo_output_dir / f"{args.algo}_sweep_log.json"
-        create_sweep_log(sweep_grid, sweep_log_path)
-        print(f"Sweep log created at {sweep_log_path}", flush=True)
+        sweep_ids_to_run = create_sweep_log(sweep_grid, sweep_log_path)
+
+        ## Maybe just disable overwrite flag...? Any reason to keep it?
+        if args.overwrite:
+            sweep_ids_to_run = f"{0-{num_sweeps-1}}"
 
         ## Get the pattern to search
         if args.algo == "CaImAn":
@@ -120,7 +126,8 @@ def main():
         submit_command = [
             "sbatch",
             "--array",
-            f"0-{num_sweeps-1}",
+            # f"0-{num_sweeps-1}",
+            sweep_ids_to_run,
             "--output",
             f"{str(slurm_output_dir)}/runner_%A_%a.out",
             "--error",

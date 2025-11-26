@@ -34,11 +34,10 @@ def cellreg_param_maker(data_dir, output_dir=None, pattern_to_search=None):
     params["plot_results"] = True
 
     params["microns_per_pixel"] = 1.2
+    params["maximal_distance"] = 12
     params["transformation_smoothness"] = 2.0
-    params["p_same_certainty_threshold"] = 0.95
     params["p_same_threshold"] = 0.5
-    params["sufficient_correlation_centroids"] = 0.2
-    params["sufficient_correlation_footprints"] = 0.3
-    params["registration_approach"] = "Simple threshold"
+    params["registration_approach"] = "Simple threshold" # "Probabilistic" or "Simple threshold"
+    params["model_type"] = "best" # "Spatial correlation", "Centroid distance", or "best"
 
     return params

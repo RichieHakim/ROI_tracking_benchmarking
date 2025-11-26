@@ -24,7 +24,7 @@ def main():
         output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.pattern_to_search is None:
-        pattern_to_search = ["data_roicat.richfile", "data_roicat_prealigned.richfile"]
+        args.pattern_to_search = ["data_roicat.richfile", "data_roicat_prealigned.richfile", "data_roicat_partial.richfile", "data_roicat_test.richfile"]
     else:
         pattern_to_search = args.pattern_to_search
     print(f"Pattern to search: {pattern_to_search}", flush=True)

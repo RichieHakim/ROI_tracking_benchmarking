@@ -233,6 +233,19 @@ def miniscreen(process: psutil.Process):
         print(f"Process {process.pid} not found", flush=True)
         return False
 
+##### SLURM utils #####
+def get_slurm_jobid(placeholder: str = "-1"):
+    """
+    Get the SLURM job ID and array ID.
+    If not on SLURM, return the placeholder for job ID and array ID.
+    """
+    if "SLURM_JOB_ID" in os.environ:
+        job_id = os.getenv("SLURM_ARRAY_JOB_ID", os.getenv("SLURM_JOB_ID"))
+        array_id = os.getenv("SLURM_ARRAY_TASK_ID", placeholder)
+    else:
+        job_id = placeholder
+        array_id = placeholder
+    return job_id, array_id
 
 ##### Benchmark Output utils #####
 def output_maker(
@@ -243,21 +256,17 @@ def output_maker(
     """
     Submit sbatch job to format the output, or run the format output script locally.
     """
-    if "SLURM_JOB_ID" in os.environ:
-        current_jobid = os.environ["SLURM_JOB_ID"]
-        if "SLURM_ARRAY_TASK_ID" in os.environ:
-            jobid = f"{current_jobid}_{os.environ['SLURM_ARRAY_TASK_ID']}"
-        else:
-            jobid = current_jobid
-        print(f"Submitting output generator job for {jobid}", flush=True)
+    job_id, array_id = get_slurm_jobid()
+
+    
+    if job_id != "-1":
+        full_id = f"{job_id}_{array_id}"
+        print(f"Submitting output generator job for {full_id}", flush=True)
 
         output_dir = Path(result_file).parent
 
-        # stdout_path = Path(current_dir) / f"bin/slurm_output/format_output_{jobid}.out"
-        # stderr_path = Path(current_dir) / f"bin/slurm_output/format_output_{jobid}.err"
-
-        stdout_path = output_dir / f"format_output_{jobid}.out"
-        stderr_path = output_dir / f"format_output_{jobid}.err"
+        stdout_path = output_dir / f"format_output_{full_id}.out"
+        stderr_path = output_dir / f"format_output_{full_id}.err"
 
         ## Create command to submit
         cmd_submit = [
@@ -270,7 +279,7 @@ def output_maker(
             # "--algo",
             algo,
             # "--job-id",
-            jobid,
+            full_id,
             # "--result-file",
             str(result_file),
         ]
@@ -286,7 +295,7 @@ def output_maker(
         print(f"Terminate current job", flush=True)
         sys.exit(0)
     else:
-        print("Not on SLURM, skipping output generator job", flush=True)
+        print("Not on SLURM. Please run format_output.py locally", flush=True)
 
 
 
@@ -313,6 +322,7 @@ def create_sweep_grid(params_path: Path, algo: str):
     """
     Split the params file into a list of params.
     Assume single depth per algo. Susceptible to nested param sets.
+    We strictly constrain overwriting the sweep log file.
     """
     with open(str(params_path), "r") as param_handle:
         sweep_params = json.load(param_handle)
@@ -321,19 +331,77 @@ def create_sweep_grid(params_path: Path, algo: str):
         raise ValueError(f"Parameter set for {algo} not found in params file {params_path}")
     
     algo_sweep_params = sweep_params[algo]
-    keys = list(algo_sweep_params.keys())
+    condition_set = algo_sweep_params.pop("grid_condition")
+    keys = [key for key in algo_sweep_params.keys() if key != "grid_condition"] ## just being careful
     values = [algo_sweep_params[key] for key in keys]
-    sweep_grid = list(dict(zip(keys, sets)) for sets in itertools.product(*values))
+    raw_grid = list(dict(zip(keys, sets)) for sets in itertools.product(*values))
+
+    ## Filter the grid based on the "grid_condition"
+    if len(condition_set) > 0:
+        print(f"Filtering grid based on the following conditions: {condition_set}", flush=True)
+        sweep_grid = [param_set for param_set in raw_grid if filter_condition(param_set, condition_set)]
+    else:
+        print(f"No grid conditions provided, using full grid with {len(raw_grid)} parameter sets", flush=True)
+        sweep_grid = raw_grid
+    print(f"Final grid with {len(sweep_grid)} parameter sets", flush=True)
     return sweep_grid
 
+def filter_condition(param_set, condition_set):
+    """
+    Based on "grid_condition" in param_set, filter the param_set.
+    """
+    local_eval_env = dict(param_set)
+    global_eval_env = {"__builtins__": None}
+
+    try:
+        for cond in condition_set:
+            if not bool(eval(cond, global_eval_env, local_eval_env)):
+                return False
+        return True
+    except Exception as e:
+        raise ValueError(f"Error evaluating condition {cond}: {e}")
+
 def create_sweep_log(sweep_grid, log_path):
-    with open(str(log_path), "w") as log_handle:
-        for ii, param_set in enumerate(sweep_grid):
-            this_line = {
-                "sweep_id": ii,
-                **param_set,
-            }
-            log_handle.write(json.dumps(this_line) + "\n")
+    if log_path.exists():
+        print(f"""Sweep log already exists at {log_path}.
+        Overwriting this file is strictly prohibited. Check collection.py file for more details.
+        We assume this is a re-run of the same sweep, to complete failed jobs.""", flush=True)
+        sweep_ids_to_run = read_failed_indices(log_path)
+    else:
+        with open(str(log_path), "w") as log_handle:
+            for ii, param_set in enumerate(sweep_grid):
+                this_line = {
+                    "sweep_id": ii,
+                    **param_set,
+                }
+                log_handle.write(json.dumps(this_line) + "\n")
+        print(f"Sweep log created at {log_path}", flush=True)
+        sweep_ids_to_run = f"0-{len(sweep_grid)-1}"
+    return sweep_ids_to_run
+
+##### JSON utils #####
+def read_failed_indices(log_path):
+    """
+    Check the last line of the sweep log to find out the failed job indices.
+    """
+    last_line = last_line_load_params(log_path)
+    if "failed_id" in last_line:
+        return last_line["failed_id"]
+    else:
+        last_id = last_line["sweep_id"]
+        return f"0-{last_id}"
+
+def write_failed_indices(log_path, failed_indices:str, last_line: None):
+    """
+    Write the failed job indices to the last line of the sweep log.
+    """
+    if last_line is None:
+        last_line = last_line_load_params(log_path)
+    if "failed_id" in last_line:
+        last_line["failed_id"] = failed_indices
+    else:
+        with open(str(log_path), "a") as log_handle:
+            log_handle.write(json.dumps({"failed_id": failed_indices}) + "\n")
 
 def line_load_params(log_path: Path, line_id: int):
     """
@@ -347,3 +415,29 @@ def line_load_params(log_path: Path, line_id: int):
             if ii == line_id:
                 return json.loads(line)
 
+def last_line_load_params(log_path: Path, return_length: bool = False, verbose: bool = False):
+    """
+    Load the last line of the sweep log.
+    """
+    line_count = 0
+    last_line = None
+    with open(str(log_path), "r") as log_handle:
+        for line in log_handle:
+            line = line.strip()
+            if not line:
+                continue
+            last_line = line
+            line_count += 1
+            if verbose:
+                print(f"Line {line_count}: {line}")
+    
+    if last_line is None:
+        raise ValueError(f"No parameter set found in {log_path}")
+    
+    try:
+        if return_length:
+            return json.loads(last_line), line_count
+        else:
+            return json.loads(last_line)
+    except Exception as e:
+        raise ValueError(f"Error loading last line of {log_path}: {e}")

@@ -9,17 +9,27 @@ results_directory = params.output_dir;
 data_path = params.data_path;
 figures_directory = fullfile(results_directory);
 figures_visibility='off';
+% 20251124 Gyu added plot handle
+plot_flag = params.plot_results;
 
 % Sanity check:
 disp(params)
 
 % Type casting
 params.microns_per_pixel = double(params.microns_per_pixel);
+params.maximal_distance = double(params.maximal_distance);
 params.transformation_smoothness = double(params.transformation_smoothness);
-params.p_same_certainty_threshold = double(params.p_same_certainty_threshold);
 params.p_same_threshold = double(params.p_same_threshold);
-params.sufficient_correlation_centroids = double(params.sufficient_correlation_centroids);
-params.sufficient_correlation_footprints = double(params.sufficient_correlation_footprints);
+
+% Check condition params
+valid_registration_approach = {'Probabilistic', 'Simple threshold'};
+if ~any(strcmp(params.registration_approach, valid_registration_approach))
+    error("registration_approach should be either 'Probabilistic' or 'Simple threshold'")
+end
+valid_model_type = {'Spatial correlation', 'Centroid distance', 'best'};
+if ~any(strcmp(params.model_type, valid_model_type))
+    error("registration_approach should be 'Spatial correlation', 'Centroid distance', or 'best'")
+end
 
 % % define data path
 % list_of_files = dir(fullfile(data_path, '*.mat'));
@@ -60,7 +70,9 @@ else
 end
 
 [footprints_projections]=compute_footprints_projections(spatial_footprints);
-plot_all_sessions_projections(footprints_projections,figures_directory,figures_visibility)
+if plot_flag
+    plot_all_sessions_projections(footprints_projections,figures_directory,figures_visibility)
+end
 disp('Done')
 clear footprints_projections
 
@@ -72,6 +84,7 @@ clear footprints_projections
 % 3. Evaluating how suitable the data is for longitudinal analysis
 
 % Defining the parameters for image alignment:
+% 20251124 Gyu: We choose non-rigid one for the best performance and fair comparison
 alignment_type='Non-rigid'; % either 'Translations', 'Translations and Rotations' or 'Non-rigid'
 use_parallel_processing=true; % either true or false
 maximal_rotation=30; % in degrees - only relevant if 'Translations and Rotations' is used
@@ -96,8 +109,8 @@ clear normalized_spatial_footprints
 [centroid_projections]=compute_centroids_projections(centroid_locations,adjusted_spatial_footprints);
 
 % Aligning the cells according to the tranlations/rotations that maximize their similarity:
-sufficient_correlation_centroids=params.sufficient_correlation_centroids; % smaller correlation imply no similarity between sessions, default 0.2
-sufficient_correlation_footprints=params.sufficient_correlation_footprints; % smaller correlation imply no similarity between sessions, default 0.3
+sufficient_correlation_centroids=0.2; % smaller correlation imply no similarity between sessions, default 0.2
+sufficient_correlation_footprints=0.3; % smaller correlation imply no similarity between sessions, default 0.3
 if strcmp(alignment_type,'Translations and Rotations')
     [spatial_footprints_corrected,centroid_locations_corrected,...
         footprints_projections_corrected,centroid_projections_corrected,...
@@ -134,10 +147,12 @@ end
     reference_session_index,sufficient_correlation_footprints,alignment_type);
 
 % plotting alignment results:
-if strcmp(alignment_type,'Non-rigid')
-    plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility,displacement_fields)
-else
-    plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility)
+if plot_flag
+    if strcmp(alignment_type,'Non-rigid')
+        plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility,displacement_fields)
+    else
+        plot_alignment_results(adjusted_spatial_footprints,centroid_locations,spatial_footprints_corrected,centroid_locations_corrected,adjusted_footprints_projections,footprints_projections_corrected,reference_session_index,all_projections_correlations,maximal_cross_correlation,alignment_translations,overlapping_FOV,alignment_type,number_of_cells_per_session,figures_directory,figures_visibility)
+    end
 end
 
 if use_parallel_processing
@@ -156,9 +171,12 @@ disp('Done')
 % Maximal distance here is chosen to be the assumed typical cell size.
 % 20250728 Gyu: We don't touch maximal_distance. We only modify microns_per_pixel.
 % There are many hard-coded values varied inside the original code. We will not touch them.
-maximal_distance=12; % cell-pairs that are more than 12 micrometers apart are assumed to be different cells.
+% 20251124 Gyu: Eh, let's parameterize this...as far as we have a solid
+% microns_per_pixel...
+% maximal_distance = 12;
+maximal_distance=params.maximal_distance; % cell-pairs that are more than 12 micrometers apart are assumed to be different cells.
 normalized_maximal_distance=maximal_distance/microns_per_pixel;
-p_same_certainty_threshold=params.p_same_certainty_threshold; % certain cells are those with p_same>threshld or <1-threshold, default 0.95
+p_same_certainty_threshold=0.95;
 
 % Computing correlations and distances across days:
 disp('Stage 3 - Calculating a probabilistic model of the data')
@@ -172,9 +190,11 @@ disp('Stage 3 - Calculating a probabilistic model of the data')
     normalized_maximal_distance);
 
 % Plotting the (x,y) displacements:
-plot_x_y_displacements(neighbors_x_displacements,neighbors_y_displacements,...
-    microns_per_pixel,normalized_maximal_distance,number_of_bins,centers_of_bins,...
-    figures_directory,figures_visibility);
+if plot_flag
+    plot_x_y_displacements(neighbors_x_displacements,neighbors_y_displacements,...
+        microns_per_pixel,normalized_maximal_distance,number_of_bins,centers_of_bins,...
+        figures_directory,figures_visibility);
+end
 disp('Part a done')
 
 %% Stage 3 (part b) - Compute a probabilistic model:
@@ -216,24 +236,26 @@ disp('Calculating a probabilistic model of the data')
     p_same_given_spatial_correlation);
 
 % Plotting the probabilistic models and estimated registration accuracy:
-plot_models(centroid_distances_model_parameters,NN_centroid_distances,...
-    NNN_centroid_distances,centroid_distances_distribution,...
-    centroid_distances_model_same_cells,centroid_distances_model_different_cells,...
-    centroid_distances_model_weighted_sum,centroid_distance_intersection,...
-    centers_of_bins,microns_per_pixel,normalized_maximal_distance,figures_directory,...
-    figures_visibility,spatial_correlations_model_parameters,NN_spatial_correlations,...
-    NNN_spatial_correlations,spatial_correlations_distribution,...
-    spatial_correlations_model_same_cells,spatial_correlations_model_different_cells,...
-    spatial_correlations_model_weighted_sum,spatial_correlation_intersection)
-
-plot_estimated_registration_accuracy(p_same_centers_of_bins,p_same_certainty_threshold,...
-    p_same_given_centroid_distance,centroid_distances_distribution,...
-    cdf_p_same_centroid_distances,uncertain_fraction_centroid_distances,...
-true_positive_per_distance_threshold,false_positive_per_distance_threshold,...
-centers_of_bins,normalized_maximal_distance,microns_per_pixel,figures_directory,...
-figures_visibility,p_same_given_spatial_correlation,spatial_correlations_distribution,...
-cdf_p_same_spatial_correlations,uncertain_fraction_spatial_correlations,...
-true_positive_per_correlation_threshold,false_positive_per_correlation_threshold)
+if plot_flag
+    plot_models(centroid_distances_model_parameters,NN_centroid_distances,...
+        NNN_centroid_distances,centroid_distances_distribution,...
+        centroid_distances_model_same_cells,centroid_distances_model_different_cells,...
+        centroid_distances_model_weighted_sum,centroid_distance_intersection,...
+        centers_of_bins,microns_per_pixel,normalized_maximal_distance,figures_directory,...
+        figures_visibility,spatial_correlations_model_parameters,NN_spatial_correlations,...
+        NNN_spatial_correlations,spatial_correlations_distribution,...
+        spatial_correlations_model_same_cells,spatial_correlations_model_different_cells,...
+        spatial_correlations_model_weighted_sum,spatial_correlation_intersection)
+    
+    plot_estimated_registration_accuracy(p_same_centers_of_bins,p_same_certainty_threshold,...
+        p_same_given_centroid_distance,centroid_distances_distribution,...
+        cdf_p_same_centroid_distances,uncertain_fraction_centroid_distances,...
+    true_positive_per_distance_threshold,false_positive_per_distance_threshold,...
+    centers_of_bins,normalized_maximal_distance,microns_per_pixel,figures_directory,...
+    figures_visibility,p_same_given_spatial_correlation,spatial_correlations_distribution,...
+    cdf_p_same_spatial_correlations,uncertain_fraction_spatial_correlations,...
+    true_positive_per_correlation_threshold,false_positive_per_correlation_threshold)
+end
 
 % Computing the P_same for each neighboring cell-pair according to the different models:
 [all_to_all_p_same_centroid_distance_model,all_to_all_p_same_spatial_correlation_model]=...
@@ -247,7 +269,12 @@ disp('Done')
 % optimized threshold of either spatial correlations or centroid distances.
 
 % Defining the parameters for initial registration:
-initial_registration_type=best_model_string; % either 'Spatial correlation', 'Centroid distance', or 'best_model_string';
+if strcmp(params.model_type, 'best')
+    initial_registration_type=best_model_string;
+else
+    initial_registration_type=params.model_type;
+end
+% either 'Spatial correlation', 'Centroid distance', or 'best_model_string';
 % The threshold that corresponds to p_same=0.5 is automatically chosen.
 % if a specific distance/correlation threshold is to be used - change the
 % initial threshold manually in the next few lines.
@@ -263,7 +290,9 @@ if strcmp(initial_registration_type,'Spatial correlation') % if spatial correlat
         [cell_to_index_map,registered_cells_spatial_correlations,non_registered_cells_spatial_correlations]=...
             initial_registration_spatial_correlations(normalized_maximal_distance,...
             initial_threshold,spatial_footprints_corrected,centroid_locations_corrected);
-        plot_initial_registration(cell_to_index_map,number_of_bins,spatial_footprints_corrected,initial_registration_type,figures_directory,figures_visibility,registered_cells_spatial_correlations,non_registered_cells_spatial_correlations)
+        if plot_flag
+            plot_initial_registration(cell_to_index_map,number_of_bins,spatial_footprints_corrected,initial_registration_type,figures_directory,figures_visibility,registered_cells_spatial_correlations,non_registered_cells_spatial_correlations)
+        end
 else % if centroid distances are used
     if exist('centroid_distance_intersection','var')
         initial_threshold=centroid_distance_intersection; % the threshold for p_same=0.5;
@@ -273,7 +302,9 @@ else % if centroid distances are used
     normalized_distance_threshold=initial_threshold/microns_per_pixel;
     [cell_to_index_map,registered_cells_centroid_distances,non_registered_cells_centroid_distances]=...
         initial_registration_centroid_distances(normalized_maximal_distance,normalized_distance_threshold,centroid_locations_corrected);
-    plot_initial_registration(cell_to_index_map,number_of_bins,spatial_footprints_corrected,initial_registration_type,figures_directory,figures_visibility,registered_cells_centroid_distances,non_registered_cells_centroid_distances,microns_per_pixel,normalized_maximal_distance)
+    if plot_flag
+        plot_initial_registration(cell_to_index_map,number_of_bins,spatial_footprints_corrected,initial_registration_type,figures_directory,figures_visibility,registered_cells_centroid_distances,non_registered_cells_centroid_distances,microns_per_pixel,normalized_maximal_distance)
+    end
 end
 
 disp([num2str(size(cell_to_index_map,1)) ' cells were found'])
@@ -287,7 +318,12 @@ disp('Done')
 
 % Defining the parameters for final registration:
 registration_approach=params.registration_approach; % either 'Probabilistic' or 'Simple threshold'
-model_type=best_model_string; % either 'Spatial correlation' or 'Centroid distance'
+% model_type=best_model_string; % either 'Spatial correlation' or 'Centroid distance'
+if strcmp(params.model_type, 'best')
+    model_type=best_model_string;
+else
+    model_type=params.model_type;
+end
 p_same_threshold=params.p_same_threshold; % only relevant if probabilistic approach is used; default 0.5
 
 % Deciding on the registration threshold:
@@ -330,7 +366,9 @@ if strcmp(registration_approach,'Probabilistic')
             all_to_all_indexes,normalized_maximal_distance,p_same_threshold,...
             centroid_locations_corrected,registration_approach,transform_data);
     end
-    plot_cell_scores(cell_scores_positive,cell_scores_negative,cell_scores_exclusive,cell_scores,p_same_registered_pairs,figures_directory,figures_visibility)
+    if plot_flag
+        plot_cell_scores(cell_scores_positive,cell_scores_negative,cell_scores_exclusive,cell_scores,p_same_registered_pairs,figures_directory,figures_visibility)
+    end
 elseif strcmp(registration_approach,'Simple threshold')
     if strcmp(model_type,'Spatial correlation')
         [optimal_cell_to_index_map,registered_cells_centroids]=...
@@ -347,8 +385,10 @@ end
 [is_in_overlapping_FOV]=check_if_in_overlapping_FOV(registered_cells_centroids,overlapping_FOV);
 
 % Plotting the registration results with the cell maps from all sessions:
-plot_all_registered_projections(spatial_footprints_corrected,...
-    optimal_cell_to_index_map,figures_directory,figures_visibility)
+if plot_flag
+    plot_all_registered_projections(spatial_footprints_corrected,...
+        optimal_cell_to_index_map,figures_directory,figures_visibility)
+end
 
 % move corrected_spatial footprints 
 if memory_efficient_run
