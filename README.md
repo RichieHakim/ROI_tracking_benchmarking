@@ -32,29 +32,71 @@ pip install -U tensorflow==2.14
 pip install -e .
 ```
 
+## Abstract SLURM workflow
+
+The full pipeline on SLURM can be summarized as:
+
+```text
+batch_dispatch.py
+    └── slurm_{algo}.sh  (SLURM array job)
+          └── run_benchmark.py
+                └── slurm_format_output.sh
+                      └── format_output.py
+collect_output.py  (manual)
+batch_dispatch.py  (optional rerun of failed jobs)
+```
+
 ## Data structure
 RichFile expected. Expected to contain at least two keys: 'spatialFootprints' and 'FOV_images'.
 
 - 'spatialFootprints' is a list of csc matrices of (# of components, pixels).
 - 'FOV_images' is a list of 2D numpy arrays.
 
-## Usage for test data
-Untar the data_roicat_test data in test/test_dataset.
+## Input directory structure
+
+We support batch data submission as long as data are structured as follows:
+
+```text
+arbitrary/
+└── stem/
+    └── mother_dir/
+        ├── child_1/
+        │   └── child_1_data.richfile
+        └── child_2/
+            └── child_2_data.richfile
+```
+Simple test data is provided in test/test_dataset. Untar the data_roicat_test.tar to play around with the code.
 
 ## Prepare matlab files for CellReg
-Use roicat_benchmark/utils/sample_matfile_maker.py to convert richfile to matfile.
+CellReg needs per-session matfiles. Use roicat_benchmark/utils/sample_matfile_maker.py to convert richfile to per-session matfiles.
 The function takes four arguments:
 - '--data-dir': the directory containing richfiles.
 - '--output-dir': the directory to save converted matfiles. If not provided, it will be the same as --data-dir.
 - '--pattern-to-search': the pattern to search for the richfile. Default is ["data_roicat.richfile", "data_roicat_prealigned.richfile"].
 - '--verbose': print verbose output. Default is False.
 
-CellReg expects matfiles to be in the same directory of the original richfile.
-
 Example:
 ```
 cd ROI_tracking_benchmarking ## Skip if you're already in the directory
 python3 roicat_benchmark/utils/sample_matfile_maker.py --data-dir test/test_dataset --pattern-to-search data_roicat_test.richfile --verbose
+```
+
+CellReg expects matfiles to be in the same directory of the original richfile. The converted matfiles will be structured as follows:
+
+```text
+arbitrary/
+└── stem/
+    └── mother_dir/
+        ├── child_1/
+        │   └── child_1_data.richfile
+        │   └── child_1_data_0001.mat
+        │   └── child_1_data_0002.mat
+        │   └── ...
+        └── child_2/
+            └── child_2_data.richfile
+            └── child_2_data_0001.mat
+            └── child_2_data_0002.mat
+            └── ...
 ```
 
 CaImAn can take richfile as input.
@@ -115,4 +157,68 @@ For example,
 This means that the hyperparameter sweep grid will only contain parameter sets where the registration approach is either "Probabilistic" or the p_same_threshold is 0.5.
 If no grid condition is provided, the full grid will be used.
 
-## Output format
+## Output directory structure
+Output structure mirrors the input tree. If submitted --data-dir is `arbitrary/stem/mother_dir`, structure will be as follows:
+```text
+output_dir/
+├── child_1/
+    ├── sweep_params.json          # copied from the dispatch step; 
+    └── {algo}_output/
+        ├── {algo}_sweep_log.json  # one line per hyperparameter set / job
+        ├── collection_bin/        # finalized richfile outputs only
+        ├── JobId_%A_%a/           # raw outputs for each SLURM array job
+        └── slurm_bin/             # stdout / stderr logs
+└── child_2/
+    ├── sweep_params.json          # Same as child_1/...
+    └── {algo}_output/
+        ├──...
+```
+
+On the other hand, if --data-dir is `arbitrary/stem/mother_dir/child_1`, structure will be as follows:
+```text
+output_dir/
+├── sweep_params.json          # copied from the dispatch step; 
+└── {algo}_output/
+    ├── {algo}_sweep_log.json  # one line per hyperparameter set / job
+    ├── collection_bin/        # finalized richfile outputs only
+    ├── JobId_%A_%a/           # raw outputs for each SLURM array job
+    └── slurm_bin/             # stdout / stderr logs
+```
+
+## A little bit more detailed workflow
+0. **Prepare shell files and json files**
+    - We recommend to adjust shell file parameters to your cluster's environment and your data size.
+    - hyperparameter json files (e.g. `sweep_params.json`) should be provided.
+
+1. **Dispatch & setup — `batch_dispatch.py`**
+    - Scans the input tree under submitted `--data-dir`.
+    - Creates the mirrored `output_dir/mirrored/stem/{algo}_output/` directory structure.
+    - Copies `sweep_params.json` (global sweep configuration).
+    - Creates `{algo}_sweep_log.json` in each child directory (one line per one hyperparameter set).
+    - Submits a non-interactive SLURM array job via `bin/slurm_{algo}.sh`.
+
+2. **SLURM entrypoint — `slurm_{algo}.sh` -> `run_benchmark.py`**
+    - Reads the hyperparameter set corresponding to array index `%a` from `{algo}_sweep_log.json`
+    - Calls each algorithm, `slurm_{algo}.sh`, as a python subprocess.
+    - Writes **raw outputs** into the appropriate `JobId_%A_%a/` directory.
+
+3. **Output formatting — `slurm_format_output.sh` -> `format_output.py`**
+    - When the benchmark subprocess is done, `run_benchmark.py` submits a second non-interactive SLURM job using `slurm_format_output.sh`.
+    - `slurm_format_output.sh` runs `format_output.py`, which:
+        - Reads raw data from `JobId_%A_%a/`.
+        - Produces finalized, cleaned `*.richfile` outputs.
+        - Copies them into the corresponding `collection_bin/` directory.
+
+4. **Result collection — `collect_output.py`**
+    - Manually run `collect_output.py` to summarize a sweep:
+        - Aggregates results and metrics across all children (not implemented yet).
+        - Appends indices of failed or missing jobs to the **last line** of each
+        `{algo}_sweep_log.json`.
+
+6. **Rerun failed jobs — `batch_dispatch.py` (optional)**
+    - On rerun, `batch_dispatch.py`:
+        - Reads the last line of `{algo}_sweep_log.json`.
+        - Submits SLURM jobs **only** for jobs marked as not done.
+    - This avoids re-running successful jobs and supports incremental recovery.
+    - Due to this feature, we do not recommend obliterating or overwriting `{algo}_sweep_log.json` file.
+
