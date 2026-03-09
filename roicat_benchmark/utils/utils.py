@@ -398,7 +398,8 @@ def write_failed_indices(log_path, failed_indices:str, last_line: None):
     if last_line is None:
         last_line = last_line_load_params(log_path)
     if "failed_id" in last_line:
-        last_line["failed_id"] = failed_indices
+        new_line = {"failed_id": failed_indices}
+        replace_last_line(log_path, new_line)
     else:
         with open(str(log_path), "a") as log_handle:
             log_handle.write(json.dumps({"failed_id": failed_indices}) + "\n")
@@ -441,3 +442,30 @@ def last_line_load_params(log_path: Path, return_length: bool = False, verbose: 
             return json.loads(last_line)
     except Exception as e:
         raise ValueError(f"Error loading last line of {log_path}: {e}")
+
+def replace_last_line(log_path: Path, new_line: dict):
+    try:
+        with open(str(log_path), "r") as log_handle:
+            lines = log_handle.readlines()
+        lines[-1] = json.dumps(new_line) + "\n"
+        with open(str(log_path), "w") as log_handle:
+            log_handle.writelines(lines)
+        print(f"Last line of {log_path} replaced with {new_line}", flush=True)
+    except Exception as e:
+        raise ValueError(f"Error replacing last line of {log_path}: {e}")
+
+##### Path utils #####
+def nested_glob(path: Path, pattern: str, max_depth: int = -1):
+    """
+    Glob the pattern in the path.
+    """
+    if max_depth == -1:
+        return list(path.rglob(pattern))
+    else:
+        bases = ["/".join(["*"] * depth) for depth in range(1, max_depth)]
+        added_pattern = ["/".join([base, pattern]) for base in bases]
+        total_pattern = [pattern] + added_pattern
+        globs_list = [list(path.glob(pat)) for pat in total_pattern]
+        concat_list = [gl for gl in globs_list if gl]
+        flattened_list = list(itertools.chain(*concat_list))
+        return flattened_list

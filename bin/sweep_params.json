@@ -1,9 +1,9 @@
 {
     "CellReg": {
         "microns_per_pixel": [1.2],
-        "maximal_distance": [12],
-        "transformation_smoothness": [2.0],
-        "p_same_threshold": [0.5, 0.7],
+        "maximal_distance": [10, 12, 14],
+        "transformation_smoothness": [0.5, 1.0, 2.0, 3.0],
+        "p_same_threshold": [0.3, 0.5, 0.7, 0.9],
         "registration_approach": ["Probabilistic", "Simple threshold"],
         "model_type": ["Spatial correlation", "Centroid distance", "best"],
         "grid_condition": [
@@ -11,9 +11,9 @@
         ]
     },
     "CaImAn": {
-        "max_thr": [0.0, 0.5],
-        "thresh_cost": [0.5, 0.7],
-        "max_dist": [5, 10],
+        "max_thr": [0.3, 0.5, 0.7, 0.9],
+        "thresh_cost": [0.3, 0.5, 0.7, 0.9],
+        "max_dist": [8, 10, 12, 14],
         "grid_condition": []
     }
 }

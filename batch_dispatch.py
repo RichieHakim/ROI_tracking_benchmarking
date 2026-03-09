@@ -113,6 +113,13 @@ def main():
         if args.overwrite:
             sweep_ids_to_run = f"{0-{num_sweeps-1}}"
 
+        ## If perfect, skip this one
+        if not sweep_ids_to_run:
+            print(f"No jobs to run for {sweep_data_path}", flush=True)
+            continue
+        else:
+            print(f"Jobs to run for {sweep_data_path}: {sweep_ids_to_run}", flush=True)
+
         ## Get the pattern to search
         if args.algo == "CaImAn":
             this_pattern_to_search = sweep_data_path.name
